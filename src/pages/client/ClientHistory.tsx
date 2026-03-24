@@ -10,25 +10,47 @@ export default function ClientHistory() {
 
   useEffect(() => {
     if (!accessLink) return;
-    const c = getClientByLink(accessLink);
-    if (c) setConsumptions(getClientConsumptions(c.id).reverse());
+
+    const client = getClientByLink(accessLink);
+    if (!client) return;
+
+    setConsumptions(getClientConsumptions(client.id));
   }, [accessLink]);
 
   return (
     <div>
       <h2 className="text-xl font-display font-bold mb-4">Historial</h2>
+
       {consumptions.length === 0 ? (
-        <div className="glass-card p-8 text-center text-muted-foreground">Sin consumos registrados</div>
+        <div className="glass-card p-8 text-center text-muted-foreground">
+          Sin movimientos registrados
+        </div>
       ) : (
         <div className="space-y-2">
-          {consumptions.map(c => (
-            <div key={c.id} className="glass-card p-3 flex items-center justify-between">
+          {consumptions.map((consumption) => (
+            <div key={consumption.id} className="glass-card p-3 flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-medium">{c.fecha}</p>
-                <p className="text-xs text-muted-foreground">{c.tipo}</p>
+                <p className="text-sm font-medium">{consumption.fecha}</p>
+                <p className="text-xs text-muted-foreground">
+                  {consumption.cantidad} vianda(s) · {consumption.tipo}
+                  {consumption.notas ? ` · ${consumption.notas}` : ''}
+                </p>
               </div>
-              <Badge variant={c.status === 'retirado' ? 'default' : 'outline'}>
-                {c.status === 'retirado' ? '✓ Retirado' : c.status === 'no_retirado' ? '✗ No retiró' : '↻ Reprogramado'}
+
+              <Badge
+                variant={
+                  consumption.status === 'retirado'
+                    ? 'default'
+                    : consumption.status === 'no_retirado'
+                    ? 'destructive'
+                    : 'secondary'
+                }
+              >
+                {consumption.status === 'retirado'
+                  ? '✓ Retirado'
+                  : consumption.status === 'no_retirado'
+                  ? '✗ No retiró'
+                  : '↻ Reprogramado'}
               </Badge>
             </div>
           ))}
