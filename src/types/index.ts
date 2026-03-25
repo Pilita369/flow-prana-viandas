@@ -46,6 +46,7 @@ export interface Client {
   // Si más adelante querés cuenta propia
   hasAccount: boolean;
   password?: string;
+  alias?: string; // Nombre o apodo para el ranking (puede ser inventado)
 
   createdAt: string;
 }

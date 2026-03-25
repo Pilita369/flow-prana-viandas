@@ -458,6 +458,11 @@ export function addPoints(clientId: string, puntos: number, motivo: string): voi
 // RECOMPENSAS / CANJES
 // ======================================================
 
+// Guardar premios modificados (para ABM desde AdminPoints)
+export function saveRewards(rewards: Reward[]): void {
+  setItem('mp_rewards', rewards);
+}
+
 export function getRewards(): Reward[] {
   return getItem('mp_rewards', [
     {
