@@ -39,16 +39,16 @@ export default function ClientHistory() {
 
               <Badge
                 variant={
-                  consumption.status === 'retirado'
+                  consumption.status === 'retirado' || consumption.status === 'consumido'
                     ? 'default'
-                    : consumption.status === 'no_retirado'
+                    : consumption.status === 'no_retirado' || consumption.status === 'no_retiro'
                     ? 'destructive'
                     : 'secondary'
                 }
               >
-                {consumption.status === 'retirado'
+                {consumption.status === 'retirado' || consumption.status === 'consumido'
                   ? '✓ Retirado'
-                  : consumption.status === 'no_retirado'
+                  : consumption.status === 'no_retirado' || consumption.status === 'no_retiro'
                   ? '✗ No retiró'
                   : '↻ Reprogramado'}
               </Badge>

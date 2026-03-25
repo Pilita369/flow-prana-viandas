@@ -12,6 +12,7 @@ import {
   getClientConsumptions,
   getClientPoints,
   getDisponibles,
+  getCantidadUsada,
   createConsumption,
   deleteConsumption,
 } from '@/lib/store';
@@ -27,7 +28,6 @@ export default function ClientDetail() {
   const [consumptions, setConsumptions] = useState<Consumption[]>([]);
   const [points, setPoints] = useState<PointTransaction[]>([]);
 
-  // Form para carga manual/histórica de consumos
   const [manualForm, setManualForm] = useState({
     fecha: new Date().toISOString().split('T')[0],
     status: 'retirado' as ConsumptionStatus,
@@ -56,6 +56,7 @@ export default function ClientDetail() {
 
   if (!client) return null;
 
+  const usadas = getCantidadUsada(plan);
   const disponibles = getDisponibles(plan);
   const accessUrl = `${window.location.origin}/cliente/${client.accessLink}`;
 
@@ -128,9 +129,6 @@ export default function ClientDetail() {
         </p>
       </div>
 
-      {/* ===============================
-          RESUMEN DEL CLIENTE
-         =============================== */}
       <div className="grid md:grid-cols-2 gap-4 mb-6">
         <div className="glass-card p-5 space-y-3">
           <h3 className="font-semibold">Resumen del contrato</h3>
@@ -149,7 +147,7 @@ export default function ClientDetail() {
                 </div>
                 <div>
                   <span className="text-muted-foreground">Usadas:</span>{' '}
-                  <strong>{plan.cantidadUsada}</strong>
+                  <strong>{usadas}</strong>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Disponibles:</span>{' '}
@@ -216,9 +214,6 @@ export default function ClientDetail() {
         </div>
       </div>
 
-      {/* ===============================
-          CARGA MANUAL / HISTÓRICA
-         =============================== */}
       <div className="glass-card p-5 mb-6 space-y-4">
         <h3 className="font-semibold">Cargar consumo manual / histórico</h3>
 
@@ -287,9 +282,6 @@ export default function ClientDetail() {
         </div>
       </div>
 
-      {/* ===============================
-          HISTORIAL DE CONSUMOS
-         =============================== */}
       <div className="glass-card p-5 mb-6">
         <h3 className="font-semibold mb-4">Historial de movimientos</h3>
 
@@ -314,16 +306,16 @@ export default function ClientDetail() {
                 <div className="flex items-center gap-2">
                   <Badge
                     variant={
-                      consumption.status === 'retirado'
+                      consumption.status === 'retirado' || consumption.status === 'consumido'
                         ? 'default'
-                        : consumption.status === 'no_retirado'
+                        : consumption.status === 'no_retirado' || consumption.status === 'no_retiro'
                         ? 'destructive'
                         : 'secondary'
                     }
                   >
-                    {consumption.status === 'retirado'
+                    {consumption.status === 'retirado' || consumption.status === 'consumido'
                       ? 'Retirado'
-                      : consumption.status === 'no_retirado'
+                      : consumption.status === 'no_retirado' || consumption.status === 'no_retiro'
                       ? 'No retiró'
                       : 'Reprogramado'}
                   </Badge>
@@ -343,9 +335,6 @@ export default function ClientDetail() {
         )}
       </div>
 
-      {/* ===============================
-          HISTORIAL DE PUNTOS
-         =============================== */}
       <div className="glass-card p-5">
         <h3 className="font-semibold mb-4">Historial de puntos</h3>
 

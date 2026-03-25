@@ -29,7 +29,6 @@ export default function DailyConsumptions() {
     const todayConsumptions = getTodayConsumptions();
     const result: TodayItem[] = [];
 
-    // Clientes fijos programados para hoy
     const fixed = getFixedClientsForToday();
     fixed.forEach(({ client, plan }) => {
       const existing = todayConsumptions.find(
@@ -44,7 +43,6 @@ export default function DailyConsumptions() {
       });
     });
 
-    // Pedidos flexibles confirmados para hoy
     const orders = getFlexibleOrders().filter(
       (o) => o.fechaEntrega === today && o.status === 'confirmado'
     );
@@ -151,15 +149,19 @@ export default function DailyConsumptions() {
                       {item.consumption && (
                         <Badge
                           variant={
-                            item.consumption.status === 'retirado'
+                            item.consumption.status === 'retirado' || item.consumption.status === 'consumido'
                               ? 'default'
-                              : item.consumption.status === 'no_retirado'
+                              : item.consumption.status === 'no_retirado' || item.consumption.status === 'no_retiro'
                               ? 'destructive'
                               : 'secondary'
                           }
                           className="text-xs"
                         >
-                          {item.consumption.status.replace('_', ' ')}
+                          {(item.consumption.status === 'retirado' || item.consumption.status === 'consumido')
+                            ? 'retirado'
+                            : (item.consumption.status === 'no_retirado' || item.consumption.status === 'no_retiro')
+                            ? 'no retiró'
+                            : 'reprogramado'}
                         </Badge>
                       )}
                     </div>
@@ -175,7 +177,11 @@ export default function DailyConsumptions() {
                   <Button
                     size="sm"
                     onClick={() => markStatus(item, 'retirado')}
-                    variant={item.consumption?.status === 'retirado' ? 'default' : 'outline'}
+                    variant={
+                      item.consumption?.status === 'retirado' || item.consumption?.status === 'consumido'
+                        ? 'default'
+                        : 'outline'
+                    }
                   >
                     ✓ Retiró
                   </Button>
@@ -183,7 +189,11 @@ export default function DailyConsumptions() {
                   <Button
                     size="sm"
                     onClick={() => markStatus(item, 'no_retirado')}
-                    variant={item.consumption?.status === 'no_retirado' ? 'destructive' : 'outline'}
+                    variant={
+                      item.consumption?.status === 'no_retirado' || item.consumption?.status === 'no_retiro'
+                        ? 'destructive'
+                        : 'outline'
+                    }
                   >
                     ✗ No retiró
                   </Button>

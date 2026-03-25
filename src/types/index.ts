@@ -1,27 +1,32 @@
-// ===============================
-// TIPOS GENERALES DE LA APP
-// ===============================
+// ==============================================
+// TIPOS GENERALES DE LA APLICACIÓN
+// ==============================================
 
-// Modalidad del plan:
-// - fijo: tiene días semanales sugeridos
-// - flexible: pide cuando necesita
+// Modalidad del contrato
 export type PlanModality = 'fijo' | 'flexible';
 
-// Días hábiles contemplados por el negocio
+// Días hábiles del negocio
 export type DayOfWeek = 'lunes' | 'martes' | 'miercoles' | 'jueves' | 'viernes';
-
-// Estado del consumo cargado por el admin
-export type ConsumptionStatus = 'retirado' | 'no_retirado' | 'reprogramado';
-
-// Estado del pedido flexible
-export type OrderStatus = 'pendiente' | 'confirmado' | 'cancelado';
 
 // Tipo de entrega
 export type DeliveryType = 'retiro' | 'envio';
 
-// ===============================
+// Estado de un consumo / movimiento
+// Incluyo estados nuevos y viejos para evitar romper código anterior.
+export type ConsumptionStatus =
+  | 'retirado'
+  | 'no_retirado'
+  | 'reprogramado'
+  | 'consumido'
+  | 'no_retiro'
+  | 'pendiente';
+
+// Estado de pedido flexible
+export type OrderStatus = 'pendiente' | 'confirmado' | 'cancelado' | 'entregado';
+
+// ==============================================
 // CLIENTE
-// ===============================
+// ==============================================
 export interface Client {
   id: string;
   nombre: string;
@@ -29,80 +34,88 @@ export interface Client {
   telefono: string;
   email: string;
   direccion?: string;
+
   codigoReferido: string;
   referidoPor?: string;
+
   puntos: number;
+
+  // Token/link público para acceso cliente
   accessLink: string;
+
+  // Si más adelante querés cuenta propia
   hasAccount: boolean;
   password?: string;
+
   createdAt: string;
 }
 
-// ===============================
-// CONTRATO / PLAN
-// ===============================
-// OJO: acá ya no usamos 10 | 15 | 20.
-// Ahora cada cliente puede tener la cantidad libre que vos quieras.
+// ==============================================
+// PLAN / CONTRATO
+// ==============================================
+// IMPORTANTE:
+// Agrego campos nuevos y mantengo algunos "viejos"
+// para no romper pantallas previas del proyecto.
 export interface Plan {
   id: string;
   clientId: string;
 
-  // Cantidad total contratada por el cliente
+  // Cantidad total contratada
   cantidadContratada: number;
 
-  // Cantidad ya utilizada
-  cantidadUsada: number;
+  // AJUSTE inicial opcional
+  // Sirve si querés arrancar con saldo histórico
+  ajusteInicialUsadas?: number;
+
+  // Campos heredados para compatibilidad con código viejo
+  tipo?: number; // alias viejo de cantidadContratada
+  cantidadUsada?: number; // alias viejo
+  viandasUsadas?: number; // alias viejo
 
   modalidad: PlanModality;
 
-  // Valor por vianda (editable por cliente)
   precioUnitario: number;
-
-  // Importe total que pagó
   importeAbonado: number;
 
   fechaInicio: string;
   fechaFin: string;
 
-  // Retiro o envío
   tipoEntrega: DeliveryType;
-
-  // Si querés guardar una dirección especial para envío
   direccionEnvio?: string;
 
   activo: boolean;
 
-  // Datos opcionales para modalidad fija
   diasFijos?: DayOfWeek[];
-
-  // Datos opcionales para modalidad flexible
   cantidadSemanal?: number;
   horaLimite?: string;
 
-  // Observaciones internas del admin
   observaciones?: string;
 }
 
-// ===============================
-// MOVIMIENTO DE CONSUMO
-// ===============================
-// Cada movimiento representa una acción del admin.
-// Le agregamos "cantidad" porque a veces puede retirar 2 viandas.
+// ==============================================
+// CONSUMOS / MOVIMIENTOS
+// ==============================================
 export interface Consumption {
   id: string;
   clientId: string;
   planId: string;
   fecha: string;
+
   status: ConsumptionStatus;
+
+  // fijo / flexible / manual
   tipo: 'fijo' | 'flexible' | 'manual';
+
+  // cantidad de viandas en ese movimiento
   cantidad: number;
+
   notas?: string;
   createdAt: string;
 }
 
-// ===============================
+// ==============================================
 // PEDIDOS FLEXIBLES
-// ===============================
+// ==============================================
 export interface FlexibleOrder {
   id: string;
   clientId: string;
@@ -113,9 +126,9 @@ export interface FlexibleOrder {
   creadoPor: 'cliente' | 'admin';
 }
 
-// ===============================
+// ==============================================
 // PUNTOS
-// ===============================
+// ==============================================
 export interface PointTransaction {
   id: string;
   clientId: string;

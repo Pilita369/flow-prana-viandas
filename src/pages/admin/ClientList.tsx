@@ -4,7 +4,7 @@ import { Plus, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { getClients, getActivePlan, getDisponibles, deleteClient } from '@/lib/store';
+import { getClients, getActivePlan, getDisponibles, getCantidadUsada, deleteClient } from '@/lib/store';
 import { toast } from 'sonner';
 import type { Client, Plan } from '@/types';
 
@@ -75,6 +75,7 @@ export default function ClientList() {
         <div className="grid gap-3">
           {filtered.map((client) => {
             const plan = client.plan;
+            const usadas = getCantidadUsada(plan);
             const disponibles = getDisponibles(plan);
 
             return (
@@ -109,7 +110,7 @@ export default function ClientList() {
 
                           <p className="text-xs text-muted-foreground">
                             Contratadas: <strong>{plan.cantidadContratada}</strong> · Usadas:{' '}
-                            <strong>{plan.cantidadUsada}</strong> · Disponibles:{' '}
+                            <strong>{usadas}</strong> · Disponibles:{' '}
                             <strong>{disponibles}</strong>
                           </p>
 

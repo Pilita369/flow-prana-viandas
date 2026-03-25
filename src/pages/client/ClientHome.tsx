@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { getClientByLink, getActivePlan, canOrderTomorrow, createOrder, getDisponibles } from '@/lib/store';
+import {
+  getClientByLink,
+  getActivePlan,
+  canOrderTomorrow,
+  createOrder,
+  getDisponibles,
+  getCantidadUsada,
+} from '@/lib/store';
+import { getBusinessConfig } from '@/lib/business';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
@@ -8,10 +16,11 @@ import type { Client, Plan } from '@/types';
 
 export default function ClientHome() {
   const { accessLink } = useParams();
-
   const [client, setClient] = useState<Client | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [orderCheck, setOrderCheck] = useState<{ can: boolean; reason?: string }>({ can: false });
+
+  const business = getBusinessConfig();
 
   useEffect(() => {
     if (!accessLink) return;
@@ -34,11 +43,12 @@ export default function ClientHome() {
   if (!plan) {
     return (
       <div className="glass-card p-8 text-center">
-        <p className="text-muted-foreground">No tenés un contrato activo. Contactá al negocio.</p>
+        <p className="text-muted-foreground">No tenés un contrato activo. Escribinos para ayudarte.</p>
       </div>
     );
   }
 
+  const usadas = getCantidadUsada(plan);
   const disponibles = getDisponibles(plan);
 
   const handleOrder = () => {
@@ -56,11 +66,21 @@ export default function ClientHome() {
     setOrderCheck(canOrderTomorrow(client.id));
   };
 
+  const handleContact = () => {
+    const msg = encodeURIComponent(
+      `Hola! Soy ${client.nombre} ${client.apellido}. Tengo una consulta sobre mi seguimiento de viandas.`
+    );
+
+    window.open(`https://wa.me/${business.whatsappNegocio}?text=${msg}`, '_blank');
+  };
+
   return (
     <div>
       <div className="mb-6">
         <h2 className="text-xl font-display font-bold">Hola, {client.nombre}</h2>
-        <p className="text-muted-foreground text-sm">Este es tu seguimiento actual en Mundo Prana</p>
+        <p className="text-muted-foreground text-sm">
+          Acá podés ver tu seguimiento. No podés editar datos, solo consultarlos.
+        </p>
       </div>
 
       <div className="space-y-4">
@@ -87,7 +107,7 @@ export default function ClientHome() {
             <div
               className="bg-primary rounded-full h-2.5 transition-all"
               style={{
-                width: `${plan.cantidadContratada > 0 ? (plan.cantidadUsada / plan.cantidadContratada) * 100 : 0}%`,
+                width: `${plan.cantidadContratada > 0 ? (usadas / plan.cantidadContratada) * 100 : 0}%`,
               }}
             />
           </div>
@@ -99,7 +119,7 @@ export default function ClientHome() {
             </div>
             <div>
               <span className="text-muted-foreground">Usadas:</span>{' '}
-              <strong>{plan.cantidadUsada}</strong>
+              <strong>{usadas}</strong>
             </div>
             <div>
               <span className="text-muted-foreground">Precio por vianda:</span>{' '}
@@ -117,19 +137,26 @@ export default function ClientHome() {
               <span className="text-muted-foreground">Fin:</span>{' '}
               <strong>{plan.fechaFin}</strong>
             </div>
+            <div>
+              <span className="text-muted-foreground">Entrega:</span>{' '}
+              <strong className="capitalize">{plan.tipoEntrega}</strong>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Puntos:</span>{' '}
+              <strong>{client.puntos}</strong>
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="stat-card">
-            <span className="text-xs text-muted-foreground">Puntos</span>
-            <span className="text-lg font-bold">{client.puntos}</span>
-          </div>
+        <div className="glass-card p-5">
+          <h3 className="text-sm font-semibold mb-3">¿Tenés dudas?</h3>
+          <p className="text-xs text-muted-foreground mb-3">
+            Si ves algo raro o querés consultar un consumo, escribinos y lo revisamos.
+          </p>
 
-          <div className="stat-card">
-            <span className="text-xs text-muted-foreground">Entrega</span>
-            <span className="text-lg font-bold capitalize">{plan.tipoEntrega}</span>
-          </div>
+          <Button onClick={handleContact} className="w-full">
+            Escribir por WhatsApp
+          </Button>
         </div>
 
         {plan.modalidad === 'flexible' && (

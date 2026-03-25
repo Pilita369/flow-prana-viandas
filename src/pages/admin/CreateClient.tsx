@@ -1,14 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { createClient, createPlan } from '@/lib/store';
+import { calculateFixedPlanEndDate, getBusinessConfig, getSuggestedPrice } from '@/lib/business';
 import { toast } from 'sonner';
-import { Copy, Send, Save } from 'lucide-react';
-import type { PlanModality, DayOfWeek, DeliveryType } from '@/types';
+import { Copy, Save, Send } from 'lucide-react';
+import type { DayOfWeek, DeliveryType, PlanModality } from '@/types';
 
 const DAYS: { value: DayOfWeek; label: string }[] = [
   { value: 'lunes', label: 'Lunes' },
@@ -19,9 +18,8 @@ const DAYS: { value: DayOfWeek; label: string }[] = [
 ];
 
 export default function CreateClient() {
-  // --------------------------------------------
-  // Datos personales del cliente
-  // --------------------------------------------
+  const businessConfig = getBusinessConfig();
+
   const [form, setForm] = useState({
     nombre: '',
     apellido: '',
@@ -31,14 +29,11 @@ export default function CreateClient() {
     password: '',
   });
 
-  // --------------------------------------------
-  // Datos del contrato/plan
-  // --------------------------------------------
   const [planForm, setPlanForm] = useState({
     cantidadContratada: 20,
-    cantidadUsada: 0,
+    ajusteInicialUsadas: 0,
     modalidad: 'fijo' as PlanModality,
-    precioUnitario: 0,
+    precioUnitario: businessConfig.precioBaseRetiro,
     importeAbonado: 0,
     fechaInicio: new Date().toISOString().split('T')[0],
     fechaFin: '',
@@ -50,7 +45,6 @@ export default function CreateClient() {
     observaciones: '',
   });
 
-  // Link generado para el cliente
   const [createdLink, setCreatedLink] = useState<string | null>(null);
 
   const toggleDay = (day: DayOfWeek) => {
@@ -62,8 +56,36 @@ export default function CreateClient() {
     }));
   };
 
+  // Sugerir precio automáticamente según el tipo de entrega
+  useEffect(() => {
+    setPlanForm((prev) => ({
+      ...prev,
+      precioUnitario: getSuggestedPrice(prev.tipoEntrega),
+    }));
+  }, [planForm.tipoEntrega]);
+
+  // Si el plan es fijo, calcular fecha fin automáticamente
+  useEffect(() => {
+    if (planForm.modalidad === 'fijo') {
+      const fechaFinCalculada = calculateFixedPlanEndDate(
+        planForm.fechaInicio,
+        Number(planForm.cantidadContratada),
+        planForm.diasFijos
+      );
+
+      setPlanForm((prev) => ({
+        ...prev,
+        fechaFin: fechaFinCalculada,
+      }));
+    }
+  }, [
+    planForm.modalidad,
+    planForm.fechaInicio,
+    planForm.cantidadContratada,
+    planForm.diasFijos,
+  ]);
+
   const handleSave = () => {
-    // Validaciones mínimas
     if (!form.nombre || !form.apellido || !form.telefono || !form.email) {
       toast.error('Completá nombre, apellido, teléfono y email');
       return;
@@ -74,12 +96,21 @@ export default function CreateClient() {
       return;
     }
 
-    if (planForm.cantidadUsada < 0 || planForm.cantidadUsada > planForm.cantidadContratada) {
-      toast.error('La cantidad usada no puede ser mayor a la contratada');
+    if (planForm.ajusteInicialUsadas < 0 || planForm.ajusteInicialUsadas > planForm.cantidadContratada) {
+      toast.error('El ajuste inicial no puede ser mayor a la cantidad contratada');
       return;
     }
 
-    // 1) Crear cliente
+    if (planForm.modalidad === 'fijo' && planForm.diasFijos.length === 0) {
+      toast.error('En un plan fijo tenés que elegir al menos un día');
+      return;
+    }
+
+    if (!planForm.fechaFin) {
+      toast.error('La fecha de fin no puede quedar vacía');
+      return;
+    }
+
     const client = createClient({
       nombre: form.nombre,
       apellido: form.apellido,
@@ -90,11 +121,10 @@ export default function CreateClient() {
       referidoPor: undefined,
     });
 
-    // 2) Crear contrato / plan personalizado
     createPlan({
       clientId: client.id,
       cantidadContratada: Number(planForm.cantidadContratada),
-      cantidadUsada: Number(planForm.cantidadUsada),
+      ajusteInicialUsadas: Number(planForm.ajusteInicialUsadas),
       modalidad: planForm.modalidad,
       precioUnitario: Number(planForm.precioUnitario),
       importeAbonado: Number(planForm.importeAbonado),
@@ -114,9 +144,9 @@ export default function CreateClient() {
     toast.success('Cliente y contrato creados correctamente');
   };
 
-  const copyLink = () => {
+  const copyLink = async () => {
     if (!createdLink) return;
-    navigator.clipboard.writeText(createdLink);
+    await navigator.clipboard.writeText(createdLink);
     toast.success('Link copiado');
   };
 
@@ -179,59 +209,39 @@ export default function CreateClient() {
       </div>
 
       <div className="grid gap-6">
-        {/* ===============================
-            DATOS PERSONALES
-           =============================== */}
+        {/* DATOS PERSONALES */}
         <div className="glass-card p-6 space-y-4">
           <h2 className="font-semibold">Datos personales</h2>
 
           <div className="grid md:grid-cols-2 gap-4">
             <div>
               <Label>Nombre</Label>
-              <Input
-                value={form.nombre}
-                onChange={(e) => setForm({ ...form, nombre: e.target.value })}
-              />
+              <Input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
             </div>
 
             <div>
               <Label>Apellido</Label>
-              <Input
-                value={form.apellido}
-                onChange={(e) => setForm({ ...form, apellido: e.target.value })}
-              />
+              <Input value={form.apellido} onChange={(e) => setForm({ ...form, apellido: e.target.value })} />
             </div>
 
             <div>
               <Label>Teléfono</Label>
-              <Input
-                value={form.telefono}
-                onChange={(e) => setForm({ ...form, telefono: e.target.value })}
-              />
+              <Input value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} />
             </div>
 
             <div>
               <Label>Email</Label>
-              <Input
-                type="email"
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-              />
+              <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
             </div>
 
             <div className="md:col-span-2">
               <Label>Dirección (opcional)</Label>
-              <Input
-                value={form.direccion}
-                onChange={(e) => setForm({ ...form, direccion: e.target.value })}
-              />
+              <Input value={form.direccion} onChange={(e) => setForm({ ...form, direccion: e.target.value })} />
             </div>
           </div>
         </div>
 
-        {/* ===============================
-            CONTRATO / PLAN
-           =============================== */}
+        {/* CONTRATO */}
         <div className="glass-card p-6 space-y-4">
           <h2 className="font-semibold">Contrato / plan</h2>
 
@@ -242,64 +252,45 @@ export default function CreateClient() {
                 type="number"
                 min={1}
                 value={planForm.cantidadContratada}
-                onChange={(e) =>
-                  setPlanForm({
-                    ...planForm,
-                    cantidadContratada: Number(e.target.value),
-                  })
-                }
+                onChange={(e) => setPlanForm({ ...planForm, cantidadContratada: Number(e.target.value) })}
               />
             </div>
 
             <div>
-              <Label>Cantidad ya usada</Label>
+              <Label>Ajuste inicial usado</Label>
               <Input
                 type="number"
                 min={0}
-                value={planForm.cantidadUsada}
-                onChange={(e) =>
-                  setPlanForm({
-                    ...planForm,
-                    cantidadUsada: Number(e.target.value),
-                  })
-                }
+                value={planForm.ajusteInicialUsadas}
+                onChange={(e) => setPlanForm({ ...planForm, ajusteInicialUsadas: Number(e.target.value) })}
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                Usalo solo si querés arrancar con un saldo previo sin cargar todo el historial.
+              </p>
             </div>
 
             <div>
               <Label>Modalidad</Label>
-              <Select
+              <select
+                className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
                 value={planForm.modalidad}
-                onValueChange={(value: PlanModality) =>
-                  setPlanForm({ ...planForm, modalidad: value })
-                }
+                onChange={(e) => setPlanForm({ ...planForm, modalidad: e.target.value as PlanModality })}
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="fijo">Fijo</SelectItem>
-                  <SelectItem value="flexible">Flexible</SelectItem>
-                </SelectContent>
-              </Select>
+                <option value="fijo">Fijo</option>
+                <option value="flexible">Flexible</option>
+              </select>
             </div>
 
             <div>
               <Label>Tipo de entrega</Label>
-              <Select
+              <select
+                className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
                 value={planForm.tipoEntrega}
-                onValueChange={(value: DeliveryType) =>
-                  setPlanForm({ ...planForm, tipoEntrega: value })
-                }
+                onChange={(e) => setPlanForm({ ...planForm, tipoEntrega: e.target.value as DeliveryType })}
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="retiro">Retiro</SelectItem>
-                  <SelectItem value="envio">Envío</SelectItem>
-                </SelectContent>
-              </Select>
+                <option value="retiro">Retiro</option>
+                <option value="envio">Envío</option>
+              </select>
             </div>
 
             <div>
@@ -308,12 +299,7 @@ export default function CreateClient() {
                 type="number"
                 min={0}
                 value={planForm.precioUnitario}
-                onChange={(e) =>
-                  setPlanForm({
-                    ...planForm,
-                    precioUnitario: Number(e.target.value),
-                  })
-                }
+                onChange={(e) => setPlanForm({ ...planForm, precioUnitario: Number(e.target.value) })}
               />
             </div>
 
@@ -323,12 +309,7 @@ export default function CreateClient() {
                 type="number"
                 min={0}
                 value={planForm.importeAbonado}
-                onChange={(e) =>
-                  setPlanForm({
-                    ...planForm,
-                    importeAbonado: Number(e.target.value),
-                  })
-                }
+                onChange={(e) => setPlanForm({ ...planForm, importeAbonado: Number(e.target.value) })}
               />
             </div>
 
@@ -337,12 +318,7 @@ export default function CreateClient() {
               <Input
                 type="date"
                 value={planForm.fechaInicio}
-                onChange={(e) =>
-                  setPlanForm({
-                    ...planForm,
-                    fechaInicio: e.target.value,
-                  })
-                }
+                onChange={(e) => setPlanForm({ ...planForm, fechaInicio: e.target.value })}
               />
             </div>
 
@@ -351,13 +327,11 @@ export default function CreateClient() {
               <Input
                 type="date"
                 value={planForm.fechaFin}
-                onChange={(e) =>
-                  setPlanForm({
-                    ...planForm,
-                    fechaFin: e.target.value,
-                  })
-                }
+                onChange={(e) => setPlanForm({ ...planForm, fechaFin: e.target.value })}
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                En plan fijo se calcula sola según días elegidos + feriados.
+              </p>
             </div>
 
             {planForm.tipoEntrega === 'envio' && (
@@ -365,27 +339,22 @@ export default function CreateClient() {
                 <Label>Dirección de envío</Label>
                 <Input
                   value={planForm.direccionEnvio}
-                  onChange={(e) =>
-                    setPlanForm({
-                      ...planForm,
-                      direccionEnvio: e.target.value,
-                    })
-                  }
+                  onChange={(e) => setPlanForm({ ...planForm, direccionEnvio: e.target.value })}
                 />
               </div>
             )}
           </div>
 
-          {/* Datos específicos para plan fijo */}
           {planForm.modalidad === 'fijo' && (
             <div className="space-y-3">
               <Label>Días fijos sugeridos</Label>
               <div className="flex flex-wrap gap-4">
                 {DAYS.map((day) => (
                   <label key={day.value} className="flex items-center gap-2 text-sm">
-                    <Checkbox
+                    <input
+                      type="checkbox"
                       checked={planForm.diasFijos.includes(day.value)}
-                      onCheckedChange={() => toggleDay(day.value)}
+                      onChange={() => toggleDay(day.value)}
                     />
                     {day.label}
                   </label>
@@ -394,7 +363,6 @@ export default function CreateClient() {
             </div>
           )}
 
-          {/* Datos específicos para plan flexible */}
           {planForm.modalidad === 'flexible' && (
             <div className="grid md:grid-cols-2 gap-4">
               <div>
@@ -403,12 +371,7 @@ export default function CreateClient() {
                   type="number"
                   min={1}
                   value={planForm.cantidadSemanal}
-                  onChange={(e) =>
-                    setPlanForm({
-                      ...planForm,
-                      cantidadSemanal: Number(e.target.value),
-                    })
-                  }
+                  onChange={(e) => setPlanForm({ ...planForm, cantidadSemanal: Number(e.target.value) })}
                 />
               </div>
 
@@ -417,12 +380,7 @@ export default function CreateClient() {
                 <Input
                   type="time"
                   value={planForm.horaLimite}
-                  onChange={(e) =>
-                    setPlanForm({
-                      ...planForm,
-                      horaLimite: e.target.value,
-                    })
-                  }
+                  onChange={(e) => setPlanForm({ ...planForm, horaLimite: e.target.value })}
                 />
               </div>
             </div>
@@ -432,14 +390,23 @@ export default function CreateClient() {
             <Label>Observaciones</Label>
             <Textarea
               value={planForm.observaciones}
-              onChange={(e) =>
-                setPlanForm({
-                  ...planForm,
-                  observaciones: e.target.value,
-                })
-              }
-              placeholder="Ej: a veces se lleva doble vianda, si no consume queda a favor, etc."
+              onChange={(e) => setPlanForm({ ...planForm, observaciones: e.target.value })}
+              placeholder="Ej: a veces se lleva doble, si no consume queda a favor, etc."
             />
+          </div>
+
+          <div>
+            <Label>Feriados cargados</Label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {businessConfig.feriados.map((feriado) => (
+                <span
+                  key={feriado}
+                  className="inline-flex items-center rounded-full border px-3 py-1 text-xs text-muted-foreground"
+                >
+                  {feriado}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
 
