@@ -75,10 +75,48 @@ export default function DailyConsumptions() {
     load();
   }, [load]);
 
-  const markStatus = (
-    item: TodayItem,
-    status: 'retirado' | 'no_retirado' | 'reprogramado'
-  ) => {
+  const askCantidad = (defaultCantidad: number): number | null => {
+    const value = window.prompt(
+      `¿Cuántas viandas retiró hoy?`,
+      String(defaultCantidad)
+    );
+
+    if (value === null) return null;
+
+    const parsed = Number(value);
+    if (!parsed || parsed <= 0) {
+      toast.error('La cantidad debe ser mayor a 0');
+      return null;
+    }
+
+    return parsed;
+  };
+
+  const markRetiro = (item: TodayItem) => {
+    const cantidad = askCantidad(item.plan.unidadesPorRetiro || 1);
+    if (!cantidad) return;
+
+    const today = new Date().toISOString().split('T')[0];
+
+    if (item.consumption) {
+      updateConsumption(item.consumption.id, 'retirado');
+      toast.success('Retiro actualizado');
+    } else {
+      createConsumption({
+        clientId: item.client.id,
+        planId: item.plan.id,
+        fecha: today,
+        status: 'retirado',
+        tipo: item.tipo,
+        cantidad,
+      });
+      toast.success('Retiro registrado');
+    }
+
+    load();
+  };
+
+  const markOther = (item: TodayItem, status: 'no_retirado' | 'reprogramado') => {
     const today = new Date().toISOString().split('T')[0];
 
     if (item.consumption) {
@@ -90,7 +128,7 @@ export default function DailyConsumptions() {
         fecha: today,
         status,
         tipo: item.tipo,
-        cantidad: 1,
+        cantidad: 0,
       });
     }
 
@@ -102,19 +140,12 @@ export default function DailyConsumptions() {
     <div>
       <div className="page-header">
         <h1 className="page-title">Consumos del día</h1>
-        <p className="page-subtitle">
-          {new Date().toLocaleDateString('es-AR', {
-            weekday: 'long',
-            day: 'numeric',
-            month: 'long',
-          })}{' '}
-          · {items.length} clientes programados
-        </p>
+        <p className="page-subtitle">{items.length} clientes programados para hoy</p>
       </div>
 
       {items.length === 0 ? (
         <div className="glass-card p-12 text-center">
-          <p className="text-muted-foreground">No hay viandas programadas para hoy.</p>
+          <p className="text-muted-foreground">No hay clientes programados para hoy.</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -146,63 +177,27 @@ export default function DailyConsumptions() {
                         {item.plan.tipoEntrega}
                       </Badge>
 
-                      {item.consumption && (
-                        <Badge
-                          variant={
-                            item.consumption.status === 'retirado' || item.consumption.status === 'consumido'
-                              ? 'default'
-                              : item.consumption.status === 'no_retirado' || item.consumption.status === 'no_retiro'
-                              ? 'destructive'
-                              : 'secondary'
-                          }
-                          className="text-xs"
-                        >
-                          {(item.consumption.status === 'retirado' || item.consumption.status === 'consumido')
-                            ? 'retirado'
-                            : (item.consumption.status === 'no_retirado' || item.consumption.status === 'no_retiro')
-                            ? 'no retiró'
-                            : 'reprogramado'}
-                        </Badge>
-                      )}
+                      <Badge variant="outline" className="text-xs">
+                        {item.plan.unidadesPorRetiro} por retiro
+                      </Badge>
                     </div>
 
                     <p className="text-xs text-muted-foreground">
-                      Disponibles: <strong>{disponibles}</strong> · Contratadas:{' '}
-                      <strong>{item.plan.cantidadContratada}</strong>
+                      Disponibles: <strong>{disponibles}</strong>
                     </p>
                   </div>
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() => markStatus(item, 'retirado')}
-                    variant={
-                      item.consumption?.status === 'retirado' || item.consumption?.status === 'consumido'
-                        ? 'default'
-                        : 'outline'
-                    }
-                  >
+                  <Button size="sm" onClick={() => markRetiro(item)}>
                     ✓ Retiró
                   </Button>
 
-                  <Button
-                    size="sm"
-                    onClick={() => markStatus(item, 'no_retirado')}
-                    variant={
-                      item.consumption?.status === 'no_retirado' || item.consumption?.status === 'no_retiro'
-                        ? 'destructive'
-                        : 'outline'
-                    }
-                  >
+                  <Button size="sm" variant="outline" onClick={() => markOther(item, 'no_retirado')}>
                     ✗ No retiró
                   </Button>
 
-                  <Button
-                    size="sm"
-                    onClick={() => markStatus(item, 'reprogramado')}
-                    variant={item.consumption?.status === 'reprogramado' ? 'secondary' : 'outline'}
-                  >
+                  <Button size="sm" variant="outline" onClick={() => markOther(item, 'reprogramado')}>
                     ↻ Reprogramado
                   </Button>
                 </div>

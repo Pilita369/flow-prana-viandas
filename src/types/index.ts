@@ -2,17 +2,12 @@
 // TIPOS GENERALES DE LA APLICACIÓN
 // ==============================================
 
-// Modalidad del contrato
 export type PlanModality = 'fijo' | 'flexible';
 
-// Días hábiles del negocio
 export type DayOfWeek = 'lunes' | 'martes' | 'miercoles' | 'jueves' | 'viernes';
 
-// Tipo de entrega
 export type DeliveryType = 'retiro' | 'envio';
 
-// Estado de un consumo / movimiento
-// Incluyo estados nuevos y viejos para evitar romper código anterior.
 export type ConsumptionStatus =
   | 'retirado'
   | 'no_retirado'
@@ -21,7 +16,6 @@ export type ConsumptionStatus =
   | 'no_retiro'
   | 'pendiente';
 
-// Estado de pedido flexible
 export type OrderStatus = 'pendiente' | 'confirmado' | 'cancelado' | 'entregado';
 
 // ==============================================
@@ -40,13 +34,15 @@ export interface Client {
 
   puntos: number;
 
-  // Token/link público para acceso cliente
+  // Link público único del cliente
   accessLink: string;
 
-  // Si más adelante querés cuenta propia
+  // Si más adelante querés login completo
   hasAccount: boolean;
   password?: string;
-  alias?: string; // Nombre o apodo para el ranking (puede ser inventado)
+
+  // Alias opcional para ranking
+  alias?: string;
 
   createdAt: string;
 }
@@ -54,29 +50,23 @@ export interface Client {
 // ==============================================
 // PLAN / CONTRATO
 // ==============================================
-// IMPORTANTE:
-// Agrego campos nuevos y mantengo algunos "viejos"
-// para no romper pantallas previas del proyecto.
 export interface Plan {
   id: string;
   clientId: string;
 
-  // Cantidad total contratada
+  // Cantidad total de viandas contratadas
   cantidadContratada: number;
 
-  // AJUSTE inicial opcional
-  // Sirve si querés arrancar con saldo histórico
+  // Ajuste inicial opcional por si no cargás todo el historial
   ajusteInicialUsadas?: number;
-
-  // Campos heredados para compatibilidad con código viejo
-  tipo?: number; // alias viejo de cantidadContratada
-  cantidadUsada?: number; // alias viejo
-  viandasUsadas?: number; // alias viejo
 
   modalidad: PlanModality;
 
+  // Precio por cada vianda
   precioUnitario: number;
-  importeAbonado: number;
+
+  // Total calculado automáticamente = cantidadContratada * precioUnitario
+  totalCalculado: number;
 
   fechaInicio: string;
   fechaFin: string;
@@ -84,11 +74,22 @@ export interface Plan {
   tipoEntrega: DeliveryType;
   direccionEnvio?: string;
 
+  // Cuántas viandas se descuentan cada vez que marcás "retiró"
+  // Ejemplo: 2 si una familia se lleva dos por día
+  unidadesPorRetiro: number;
+
   activo: boolean;
 
+  // Para plan fijo
   diasFijos?: DayOfWeek[];
+
+  // Para plan flexible
   cantidadSemanal?: number;
   horaLimite?: string;
+
+  // Fechas particulares que NO deben contarse para este cliente
+  // Ejemplo: feriado extra, viaje, ausencia, etc.
+  fechasExcluidas?: string[];
 
   observaciones?: string;
 }
@@ -107,7 +108,7 @@ export interface Consumption {
   // fijo / flexible / manual
   tipo: 'fijo' | 'flexible' | 'manual';
 
-  // cantidad de viandas en ese movimiento
+  // Cantidad de viandas de ese movimiento
   cantidad: number;
 
   notas?: string;
@@ -141,8 +142,9 @@ export interface PointTransaction {
 export interface Reward {
   id: string;
   nombre: string;
-  puntosRequeridos: number;
   descripcion: string;
+  puntosRequeridos: number;
+  activo?: boolean;
 }
 
 export interface Redemption {

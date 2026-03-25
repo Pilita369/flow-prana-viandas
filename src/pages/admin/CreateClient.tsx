@@ -1,79 +1,74 @@
-// src/pages/admin/CreateClient.tsx
-// ======================================================
-// FORMULARIO PARA CREAR UN NUEVO CLIENTE
-// Calcula automáticamente:
-//   - Fecha fin según días elegidos + feriados
-//   - Total sugerido a abonar (cantidad × precio unitario)
-// ======================================================
-
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { createClient, createPlan } from '@/lib/store';
 import {
-  calculateFixedPlanEndDate,
-  calcularTotalSugerido,
+  calculateFixedPlanEstimatedEndDate,
+  calcularDiasContratadosEstimados,
+  calcularTotalContrato,
   formatCurrencyAR,
+  formatDateAR,
   getBusinessConfig,
   getSuggestedPrice,
 } from '@/lib/business';
 import { toast } from 'sonner';
-import { Copy, Save, Send } from 'lucide-react';
+import { Copy, Save, Send, X } from 'lucide-react';
 import type { DayOfWeek, DeliveryType, PlanModality } from '@/types';
 
-// Días de la semana disponibles
 const DAYS: { value: DayOfWeek; label: string }[] = [
-  { value: 'lunes',     label: 'Lunes'     },
-  { value: 'martes',    label: 'Martes'    },
+  { value: 'lunes', label: 'Lunes' },
+  { value: 'martes', label: 'Martes' },
   { value: 'miercoles', label: 'Miércoles' },
-  { value: 'jueves',    label: 'Jueves'    },
-  { value: 'viernes',   label: 'Viernes'   },
+  { value: 'jueves', label: 'Jueves' },
+  { value: 'viernes', label: 'Viernes' },
 ];
 
 export default function CreateClient() {
   const businessConfig = getBusinessConfig();
 
-  // ── Datos personales del cliente ──────────────────────
   const [form, setForm] = useState({
-    nombre:    '',
-    apellido:  '',
-    alias:     '',   // Nombre o apodo para el ranking (puede ser inventado)
-    telefono:  '',
-    email:     '',
+    nombre: '',
+    apellido: '',
+    alias: '',
+    telefono: '',
+    email: '',
     direccion: '',
-    password:  '',
+    password: '',
   });
 
-  // ── Datos del contrato / plan ─────────────────────────
   const [planForm, setPlanForm] = useState({
-    cantidadContratada:  20,
+    cantidadContratada: 38,
     ajusteInicialUsadas: 0,
-    modalidad:           'fijo' as PlanModality,
-    precioUnitario:      businessConfig.precioBaseRetiro,
-    importeAbonado:      0,
-    fechaInicio:         new Date().toISOString().split('T')[0],
-    fechaFin:            '',
-    tipoEntrega:         'retiro' as DeliveryType,
-    direccionEnvio:      '',
-    diasFijos:           [] as DayOfWeek[],
-    cantidadSemanal:     3,
-    horaLimite:          '20:00',
-    observaciones:       '',
+    modalidad: 'fijo' as PlanModality,
+    precioUnitario: businessConfig.precioBaseRetiro,
+    fechaInicio: new Date().toISOString().split('T')[0],
+    fechaFin: '',
+    tipoEntrega: 'retiro' as DeliveryType,
+    direccionEnvio: '',
+    diasFijos: ['lunes', 'martes', 'miercoles', 'jueves', 'viernes'] as DayOfWeek[],
+    cantidadSemanal: 3,
+    horaLimite: '20:00',
+    unidadesPorRetiro: 2,
+    observaciones: '',
+    fechasExcluidas: [] as string[],
   });
 
-  // Link generado después de guardar
+  const [newExcludedDate, setNewExcludedDate] = useState('');
   const [createdLink, setCreatedLink] = useState<string | null>(null);
 
-  // ── Total sugerido calculado reactivamente ─────────────
-  // Se recalcula cada vez que cambia la cantidad o el precio
-  const totalSugerido = calcularTotalSugerido(
-    planForm.cantidadContratada,
-    planForm.precioUnitario
-  );
+  const totalCalculado = useMemo(() => {
+    return calcularTotalContrato(planForm.cantidadContratada, planForm.precioUnitario);
+  }, [planForm.cantidadContratada, planForm.precioUnitario]);
 
-  // ── Alternar día en el listado de días fijos ──────────
+  const diasContratadosEstimados = useMemo(() => {
+    return calcularDiasContratadosEstimados(
+      planForm.cantidadContratada,
+      planForm.unidadesPorRetiro
+    );
+  }, [planForm.cantidadContratada, planForm.unidadesPorRetiro]);
+
   const toggleDay = (day: DayOfWeek) => {
     setPlanForm((prev) => ({
       ...prev,
@@ -83,7 +78,6 @@ export default function CreateClient() {
     }));
   };
 
-  // ── Actualizar precio sugerido según tipo de entrega ──
   useEffect(() => {
     setPlanForm((prev) => ({
       ...prev,
@@ -91,28 +85,47 @@ export default function CreateClient() {
     }));
   }, [planForm.tipoEntrega]);
 
-  // ── Calcular fecha fin automáticamente (solo plan fijo) ─
-  // Se recalcula cuando cambian: fecha inicio, cantidad, días elegidos
   useEffect(() => {
     if (planForm.modalidad === 'fijo') {
-      const fechaFinCalculada = calculateFixedPlanEndDate(
+      const fin = calculateFixedPlanEstimatedEndDate(
         planForm.fechaInicio,
-        Number(planForm.cantidadContratada),
-        planForm.diasFijos
+        diasContratadosEstimados,
+        planForm.diasFijos,
+        planForm.fechasExcluidas
       );
 
-      setPlanForm((prev) => ({ ...prev, fechaFin: fechaFinCalculada }));
+      setPlanForm((prev) => ({
+        ...prev,
+        fechaFin: fin,
+      }));
     }
   }, [
     planForm.modalidad,
     planForm.fechaInicio,
-    planForm.cantidadContratada,
     planForm.diasFijos,
+    planForm.fechasExcluidas,
+    diasContratadosEstimados,
   ]);
 
-  // ── Guardar cliente + contrato ─────────────────────────
+  const addExcludedDate = () => {
+    if (!newExcludedDate) return;
+
+    setPlanForm((prev) => ({
+      ...prev,
+      fechasExcluidas: Array.from(new Set([...prev.fechasExcluidas, newExcludedDate])).sort(),
+    }));
+
+    setNewExcludedDate('');
+  };
+
+  const removeExcludedDate = (date: string) => {
+    setPlanForm((prev) => ({
+      ...prev,
+      fechasExcluidas: prev.fechasExcluidas.filter((d) => d !== date),
+    }));
+  };
+
   const handleSave = () => {
-    // Validaciones básicas
     if (!form.nombre || !form.apellido || !form.telefono || !form.email) {
       toast.error('Completá nombre, apellido, teléfono y email');
       return;
@@ -123,58 +136,49 @@ export default function CreateClient() {
       return;
     }
 
-    if (
-      planForm.ajusteInicialUsadas < 0 ||
-      planForm.ajusteInicialUsadas > planForm.cantidadContratada
-    ) {
-      toast.error('El ajuste inicial no puede ser mayor a la cantidad contratada');
+    if (planForm.unidadesPorRetiro <= 0) {
+      toast.error('Las viandas por retiro deben ser mayores a 0');
       return;
     }
 
     if (planForm.modalidad === 'fijo' && planForm.diasFijos.length === 0) {
-      toast.error('En un plan fijo tenés que elegir al menos un día');
+      toast.error('Elegí al menos un día para el plan fijo');
       return;
     }
 
-    if (!planForm.fechaFin) {
-      toast.error('La fecha de fin no puede quedar vacía');
-      return;
-    }
-
-    // Crear cliente en el store
     const client = createClient({
-      nombre:     form.nombre,
-      apellido:   form.apellido,
-      alias:      form.alias || form.nombre, // Si no pone alias, usa el nombre
-      telefono:   form.telefono,
-      email:      form.email,
-      direccion:  form.direccion || undefined,
-      password:   form.password || undefined,
+      nombre: form.nombre,
+      apellido: form.apellido,
+      alias: form.alias || undefined,
+      telefono: form.telefono,
+      email: form.email,
+      direccion: form.direccion || undefined,
+      password: form.password || undefined,
       referidoPor: undefined,
     });
 
-    // Crear plan/contrato asociado al cliente
     createPlan({
-      clientId:            client.id,
-      cantidadContratada:  Number(planForm.cantidadContratada),
+      clientId: client.id,
+      cantidadContratada: Number(planForm.cantidadContratada),
       ajusteInicialUsadas: Number(planForm.ajusteInicialUsadas),
-      modalidad:           planForm.modalidad,
-      precioUnitario:      Number(planForm.precioUnitario),
-      importeAbonado:      Number(planForm.importeAbonado),
-      fechaInicio:         planForm.fechaInicio,
-      fechaFin:            planForm.fechaFin,
-      tipoEntrega:         planForm.tipoEntrega,
-      direccionEnvio:      planForm.tipoEntrega === 'envio' ? planForm.direccionEnvio : undefined,
-      diasFijos:           planForm.modalidad === 'fijo' ? planForm.diasFijos : undefined,
-      cantidadSemanal:     planForm.modalidad === 'flexible' ? Number(planForm.cantidadSemanal) : undefined,
-      horaLimite:          planForm.modalidad === 'flexible' ? planForm.horaLimite : undefined,
-      observaciones:       planForm.observaciones || undefined,
+      modalidad: planForm.modalidad,
+      precioUnitario: Number(planForm.precioUnitario),
+      fechaInicio: planForm.fechaInicio,
+      fechaFin: planForm.fechaFin,
+      tipoEntrega: planForm.tipoEntrega,
+      direccionEnvio: planForm.tipoEntrega === 'envio' ? planForm.direccionEnvio : undefined,
+      diasFijos: planForm.modalidad === 'fijo' ? planForm.diasFijos : undefined,
+      cantidadSemanal: planForm.modalidad === 'flexible' ? Number(planForm.cantidadSemanal) : undefined,
+      horaLimite: planForm.modalidad === 'flexible' ? planForm.horaLimite : undefined,
+      unidadesPorRetiro: Number(planForm.unidadesPorRetiro),
+      observaciones: planForm.observaciones || undefined,
+      fechasExcluidas: planForm.fechasExcluidas,
     });
 
     const link = `${window.location.origin}/cliente/${client.accessLink}`;
     setCreatedLink(link);
 
-    toast.success('Cliente y contrato creados correctamente');
+    toast.success('Cliente creado correctamente');
   };
 
   const copyLink = async () => {
@@ -187,16 +191,12 @@ export default function CreateClient() {
     if (!createdLink || !form.telefono) return;
 
     const msg = encodeURIComponent(
-      `Hola ${form.nombre}! 🌿 Te comparto tu acceso a Mundo Prana para ver tu seguimiento de viandas: ${createdLink}`
+      `Hola ${form.nombre}, te comparto tu acceso a Mundo Prana para ver tu seguimiento: ${createdLink}`
     );
 
-    window.open(
-      `https://wa.me/${form.telefono.replace(/\D/g, '')}?text=${msg}`,
-      '_blank'
-    );
+    window.open(`https://wa.me/${form.telefono.replace(/\D/g, '')}?text=${msg}`, '_blank');
   };
 
-  // ── Pantalla de confirmación después de guardar ────────
   if (createdLink) {
     return (
       <div>
@@ -238,7 +238,6 @@ export default function CreateClient() {
     );
   }
 
-  // ── Formulario principal ───────────────────────────────
   return (
     <div>
       <div className="page-header">
@@ -247,112 +246,68 @@ export default function CreateClient() {
       </div>
 
       <div className="grid gap-6">
-
-        {/* ── DATOS PERSONALES ── */}
         <div className="glass-card p-6 space-y-4">
           <h2 className="font-semibold">Datos personales</h2>
 
           <div className="grid md:grid-cols-2 gap-4">
             <div>
               <Label>Nombre</Label>
-              <Input
-                value={form.nombre}
-                onChange={(e) => setForm({ ...form, nombre: e.target.value })}
-              />
+              <Input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
             </div>
 
             <div>
               <Label>Apellido</Label>
-              <Input
-                value={form.apellido}
-                onChange={(e) => setForm({ ...form, apellido: e.target.value })}
-              />
+              <Input value={form.apellido} onChange={(e) => setForm({ ...form, apellido: e.target.value })} />
             </div>
 
             <div>
               <Label>Teléfono</Label>
-              <Input
-                value={form.telefono}
-                onChange={(e) => setForm({ ...form, telefono: e.target.value })}
-              />
+              <Input value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} />
             </div>
 
             <div>
               <Label>Email</Label>
-              <Input
-                type="email"
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-              />
+              <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
             </div>
 
             <div>
-              {/* El alias se muestra en el ranking en lugar del nombre real.
-                  Podés inventarlo para motivar a otros clientes. */}
-              <Label>Alias para el ranking</Label>
+              <Label>Alias para ranking</Label>
               <Input
-                placeholder="Ej: La Reina del Tapper, Pilar.fit..."
                 value={form.alias}
                 onChange={(e) => setForm({ ...form, alias: e.target.value })}
+                placeholder="Ej: La Reina del Tupper"
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                Este nombre se muestra en el ranking público. Si lo dejás vacío, se usa el nombre.
-              </p>
             </div>
 
             <div>
               <Label>Dirección (opcional)</Label>
-              <Input
-                value={form.direccion}
-                onChange={(e) => setForm({ ...form, direccion: e.target.value })}
-              />
-            </div>
-
-            <div>
-              <Label>Contraseña de acceso (opcional)</Label>
-              <Input
-                type="password"
-                placeholder="Si la dejás vacía, el cliente accede solo por el link"
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-              />
+              <Input value={form.direccion} onChange={(e) => setForm({ ...form, direccion: e.target.value })} />
             </div>
           </div>
         </div>
 
-        {/* ── CONTRATO / PLAN ── */}
         <div className="glass-card p-6 space-y-4">
           <h2 className="font-semibold">Contrato / plan</h2>
 
           <div className="grid md:grid-cols-2 gap-4">
-
             <div>
               <Label>Cantidad contratada</Label>
               <Input
                 type="number"
                 min={1}
                 value={planForm.cantidadContratada}
-                onChange={(e) =>
-                  setPlanForm({ ...planForm, cantidadContratada: Number(e.target.value) })
-                }
+                onChange={(e) => setPlanForm({ ...planForm, cantidadContratada: Number(e.target.value) })}
               />
             </div>
 
             <div>
-              {/* Ajuste inicial: si el cliente ya usó viandas antes de empezar
-                  a cargar el historial, ponés ese número acá. */}
               <Label>Ajuste inicial usado</Label>
               <Input
                 type="number"
                 min={0}
                 value={planForm.ajusteInicialUsadas}
-                onChange={(e) =>
-                  setPlanForm({ ...planForm, ajusteInicialUsadas: Number(e.target.value) })
-                }
+                onChange={(e) => setPlanForm({ ...planForm, ajusteInicialUsadas: Number(e.target.value) })}
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                Usalo si querés arrancar con un saldo previo sin cargar todo el historial.
-              </p>
             </div>
 
             <div>
@@ -360,12 +315,10 @@ export default function CreateClient() {
               <select
                 className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
                 value={planForm.modalidad}
-                onChange={(e) =>
-                  setPlanForm({ ...planForm, modalidad: e.target.value as PlanModality })
-                }
+                onChange={(e) => setPlanForm({ ...planForm, modalidad: e.target.value as PlanModality })}
               >
-                <option value="fijo">Fijo (días determinados por vos)</option>
-                <option value="flexible">Flexible (avisa la noche anterior)</option>
+                <option value="fijo">Fijo</option>
+                <option value="flexible">Flexible</option>
               </select>
             </div>
 
@@ -374,12 +327,10 @@ export default function CreateClient() {
               <select
                 className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
                 value={planForm.tipoEntrega}
-                onChange={(e) =>
-                  setPlanForm({ ...planForm, tipoEntrega: e.target.value as DeliveryType })
-                }
+                onChange={(e) => setPlanForm({ ...planForm, tipoEntrega: e.target.value as DeliveryType })}
               >
                 <option value="retiro">Retiro en el local</option>
-                <option value="envio">Envío a domicilio</option>
+                <option value="envio">Envío</option>
               </select>
             </div>
 
@@ -389,37 +340,28 @@ export default function CreateClient() {
                 type="number"
                 min={0}
                 value={planForm.precioUnitario}
-                onChange={(e) =>
-                  setPlanForm({ ...planForm, precioUnitario: Number(e.target.value) })
-                }
+                onChange={(e) => setPlanForm({ ...planForm, precioUnitario: Number(e.target.value) })}
               />
             </div>
 
             <div>
-              {/* TOTAL SUGERIDO — calculado automáticamente */}
-              <Label>Total sugerido a abonar</Label>
-              <div className="flex items-center h-10 px-3 rounded-md border border-input bg-muted text-sm font-semibold text-primary">
-                {formatCurrencyAR(totalSugerido)}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {planForm.cantidadContratada} viandas × {formatCurrencyAR(planForm.precioUnitario)}
-              </p>
+              <Label>Total calculado</Label>
+              <Input value={formatCurrencyAR(totalCalculado)} readOnly />
             </div>
 
             <div>
-              {/* Importe que realmente pagó el cliente (puede ser diferente al sugerido) */}
-              <Label>Importe abonado (real)</Label>
+              <Label>Viandas por retiro</Label>
               <Input
                 type="number"
-                min={0}
-                value={planForm.importeAbonado}
-                onChange={(e) =>
-                  setPlanForm({ ...planForm, importeAbonado: Number(e.target.value) })
-                }
+                min={1}
+                value={planForm.unidadesPorRetiro}
+                onChange={(e) => setPlanForm({ ...planForm, unidadesPorRetiro: Number(e.target.value) })}
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                Ingresá lo que el cliente efectivamente pagó.
-              </p>
+            </div>
+
+            <div>
+              <Label>Días contratados estimados</Label>
+              <Input value={String(diasContratadosEstimados)} readOnly />
             </div>
 
             <div>
@@ -427,26 +369,13 @@ export default function CreateClient() {
               <Input
                 type="date"
                 value={planForm.fechaInicio}
-                onChange={(e) =>
-                  setPlanForm({ ...planForm, fechaInicio: e.target.value })
-                }
+                onChange={(e) => setPlanForm({ ...planForm, fechaInicio: e.target.value })}
               />
             </div>
 
             <div>
-              <Label>Fecha de fin</Label>
-              <Input
-                type="date"
-                value={planForm.fechaFin}
-                onChange={(e) =>
-                  setPlanForm({ ...planForm, fechaFin: e.target.value })
-                }
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                {planForm.modalidad === 'fijo'
-                  ? 'Se calcula sola según los días elegidos y los feriados nacionales.'
-                  : 'Ingresala manualmente para el plan flexible.'}
-              </p>
+              <Label>Fecha estimada de finalización</Label>
+              <Input value={planForm.fechaFin ? formatDateAR(planForm.fechaFin) : ''} readOnly />
             </div>
 
             {planForm.tipoEntrega === 'envio' && (
@@ -454,25 +383,18 @@ export default function CreateClient() {
                 <Label>Dirección de envío</Label>
                 <Input
                   value={planForm.direccionEnvio}
-                  onChange={(e) =>
-                    setPlanForm({ ...planForm, direccionEnvio: e.target.value })
-                  }
+                  onChange={(e) => setPlanForm({ ...planForm, direccionEnvio: e.target.value })}
                 />
               </div>
             )}
           </div>
 
-          {/* ── Días fijos (solo para plan fijo) ── */}
           {planForm.modalidad === 'fijo' && (
             <div className="space-y-3">
               <Label>Días de retiro</Label>
-              <p className="text-xs text-muted-foreground">
-                Marcá los días que este cliente viene a buscar su vianda.
-                La fecha fin se calcula sola.
-              </p>
               <div className="flex flex-wrap gap-4">
                 {DAYS.map((day) => (
-                  <label key={day.value} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <label key={day.value} className="flex items-center gap-2 text-sm">
                     <input
                       type="checkbox"
                       checked={planForm.diasFijos.includes(day.value)}
@@ -485,85 +407,76 @@ export default function CreateClient() {
             </div>
           )}
 
-          {/* ── Config para plan flexible ── */}
           {planForm.modalidad === 'flexible' && (
-            <div className="space-y-3">
-              <p className="text-xs text-muted-foreground">
-                El cliente tiene un cupo semanal. Puede avisarte la noche anterior
-                hasta la hora límite para confirmar que retira al día siguiente.
-                Si no avisa, la vianda queda a su favor.
-              </p>
-              <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <Label>Cupo semanal de viandas</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={planForm.cantidadSemanal}
-                    onChange={(e) =>
-                      setPlanForm({ ...planForm, cantidadSemanal: Number(e.target.value) })
-                    }
-                  />
-                </div>
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <Label>Cantidad semanal</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={planForm.cantidadSemanal}
+                  onChange={(e) => setPlanForm({ ...planForm, cantidadSemanal: Number(e.target.value) })}
+                />
+              </div>
 
-                <div>
-                  <Label>Hora límite para pedir</Label>
-                  <Input
-                    type="time"
-                    value={planForm.horaLimite}
-                    onChange={(e) =>
-                      setPlanForm({ ...planForm, horaLimite: e.target.value })
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Pasada esta hora, el botón de pedido se deshabilita.
-                  </p>
-                </div>
+              <div>
+                <Label>Hora límite para pedir</Label>
+                <Input
+                  type="time"
+                  value={planForm.horaLimite}
+                  onChange={(e) => setPlanForm({ ...planForm, horaLimite: e.target.value })}
+                />
               </div>
             </div>
           )}
+
+          <div className="space-y-3">
+            <Label>Fechas excluidas para este cliente</Label>
+
+            <div className="flex gap-2">
+              <Input
+                type="date"
+                value={newExcludedDate}
+                onChange={(e) => setNewExcludedDate(e.target.value)}
+              />
+              <Button type="button" variant="outline" onClick={addExcludedDate}>
+                Agregar fecha
+              </Button>
+            </div>
+
+            {planForm.fechasExcluidas.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {planForm.fechasExcluidas.map((date) => (
+                  <span
+                    key={date}
+                    className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs"
+                  >
+                    {formatDateAR(date)}
+                    <button type="button" onClick={() => removeExcludedDate(date)}>
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
 
           <div>
             <Label>Observaciones internas</Label>
             <Textarea
               value={planForm.observaciones}
-              onChange={(e) =>
-                setPlanForm({ ...planForm, observaciones: e.target.value })
-              }
-              placeholder="Ej: a veces se lleva doble, es alérgica al gluten, si no retira queda a favor, etc."
+              onChange={(e) => setPlanForm({ ...planForm, observaciones: e.target.value })}
+              placeholder="Ej: contrato 19 días del mes, 2 viandas diarias, si falta se excluye la fecha."
             />
-          </div>
-
-          {/* ── Resumen de feriados cargados ── */}
-          <div>
-            <Label>Feriados nacionales 2026 (cargados automáticamente)</Label>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {businessConfig.feriados
-                .filter((f) => f.startsWith('2026'))
-                .map((feriado) => (
-                  <span
-                    key={feriado}
-                    className="inline-flex items-center rounded-full border px-3 py-1 text-xs text-muted-foreground"
-                  >
-                    {feriado}
-                  </span>
-                ))}
-            </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              Estos días se saltean automáticamente al calcular la fecha fin.
-              No hace falta que los cargues a mano.
-            </p>
           </div>
         </div>
 
-        {/* ── BOTÓN GUARDAR ── */}
         <div className="flex gap-3">
           <Button onClick={handleSave}>
             <Save className="w-4 h-4 mr-2" />
             Guardar cliente
           </Button>
         </div>
-
       </div>
     </div>
   );

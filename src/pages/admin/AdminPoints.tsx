@@ -1,12 +1,3 @@
-// src/pages/admin/AdminPoints.tsx
-// ======================================================
-// GESTIÓN DE PUNTOS Y PREMIOS
-// Desde acá podés:
-//   - Agregar puntos manualmente a un cliente
-//   - Crear, editar y eliminar premios (nombre, descripción, puntos)
-//   - Ver y gestionar canjes pendientes
-// ======================================================
-
 import { useEffect, useState } from 'react';
 import {
   getClients,
@@ -20,46 +11,41 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
-import { Plus, Trash2, Edit2, Check, X } from 'lucide-react';
+import { Trash2, Edit2, Check, X } from 'lucide-react';
 import type { Client, Reward } from '@/types';
 
-// ── Tipo local para el formulario de premios ──
 interface RewardForm {
-  id:               string | null; // null = nuevo premio
-  nombre:           string;
-  descripcion:      string;
+  id: string | null;
+  nombre: string;
+  descripcion: string;
   puntosRequeridos: number;
 }
 
 const EMPTY_FORM: RewardForm = {
-  id:               null,
-  nombre:           '',
-  descripcion:      '',
+  id: null,
+  nombre: '',
+  descripcion: '',
   puntosRequeridos: 10,
 };
 
 export default function AdminPoints() {
-  const [clients,     setClients]     = useState<Client[]>([]);
-  const [rewards,     setRewards]     = useState<Reward[]>([]);
-  const [redemptions, setRedemptions] = useState<ReturnType<typeof getRedemptions>>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [rewards, setRewards] = useState<Reward[]>([]);
+  const [redemptions, setRedemptions] = useState(getRedemptions());
 
-  // ── Formulario para agregar puntos manualmente ──
   const [selectedClient, setSelectedClient] = useState('');
-  const [puntosInput,    setPuntosInput]    = useState(0);
-  const [motivoInput,    setMotivoInput]    = useState('');
+  const [puntosInput, setPuntosInput] = useState(0);
+  const [motivoInput, setMotivoInput] = useState('');
 
-  // ── Formulario de premios (crear / editar) ──
-  const [rewardForm,    setRewardForm]    = useState<RewardForm>(EMPTY_FORM);
+  const [rewardForm, setRewardForm] = useState<RewardForm>(EMPTY_FORM);
   const [editingReward, setEditingReward] = useState(false);
 
-  // Cargar datos iniciales
   useEffect(() => {
     setClients(getClients());
     setRewards(getRewards());
     setRedemptions(getRedemptions());
   }, []);
 
-  // ── Agregar puntos a un cliente ──────────────────────
   const handleAddPoints = () => {
     if (!selectedClient || !puntosInput || !motivoInput) {
       toast.error('Completá todos los campos');
@@ -67,15 +53,12 @@ export default function AdminPoints() {
     }
 
     addPoints(selectedClient, puntosInput, motivoInput);
-    toast.success('Puntos agregados correctamente');
-
-    // Refrescar lista de clientes para ver los puntos actualizados
     setClients(getClients());
     setPuntosInput(0);
     setMotivoInput('');
+    toast.success('Puntos agregados');
   };
 
-  // ── Guardar premio (crear o editar) ─────────────────
   const handleSaveReward = () => {
     if (!rewardForm.nombre.trim()) {
       toast.error('El nombre del premio no puede estar vacío');
@@ -90,43 +73,40 @@ export default function AdminPoints() {
     let updatedRewards: Reward[];
 
     if (rewardForm.id) {
-      // Editar premio existente
       updatedRewards = rewards.map((r) =>
         r.id === rewardForm.id
           ? {
               ...r,
-              nombre:           rewardForm.nombre.trim(),
-              descripcion:      rewardForm.descripcion.trim(),
+              nombre: rewardForm.nombre.trim(),
+              descripcion: rewardForm.descripcion.trim(),
               puntosRequeridos: rewardForm.puntosRequeridos,
+              activo: true,
             }
           : r
       );
       toast.success('Premio actualizado');
     } else {
-      // Crear nuevo premio
       const newReward: Reward = {
-        id:               Date.now().toString(),
-        nombre:           rewardForm.nombre.trim(),
-        descripcion:      rewardForm.descripcion.trim(),
+        id: Date.now().toString(),
+        nombre: rewardForm.nombre.trim(),
+        descripcion: rewardForm.descripcion.trim(),
         puntosRequeridos: rewardForm.puntosRequeridos,
-        activo:           true,
+        activo: true,
       };
+
       updatedRewards = [...rewards, newReward];
       toast.success('Premio creado');
     }
 
-    // Guardar en el store (localStorage)
     saveRewards(updatedRewards);
     setRewards(updatedRewards);
-
-    // Limpiar formulario
     setRewardForm(EMPTY_FORM);
     setEditingReward(false);
   };
 
-  // ── Eliminar un premio ───────────────────────────────
   const handleDeleteReward = (id: string) => {
-    if (!confirm('¿Eliminar este premio? Los canjes ya realizados no se afectan.')) return;
+    const ok = window.confirm('¿Eliminar este premio?');
+    if (!ok) return;
 
     const updated = rewards.filter((r) => r.id !== id);
     saveRewards(updated);
@@ -134,18 +114,16 @@ export default function AdminPoints() {
     toast.success('Premio eliminado');
   };
 
-  // ── Empezar a editar un premio ───────────────────────
   const handleEditReward = (reward: Reward) => {
     setRewardForm({
-      id:               reward.id,
-      nombre:           reward.nombre,
-      descripcion:      reward.descripcion,
+      id: reward.id,
+      nombre: reward.nombre,
+      descripcion: reward.descripcion,
       puntosRequeridos: reward.puntosRequeridos,
     });
     setEditingReward(true);
   };
 
-  // ── Cancelar edición ─────────────────────────────────
   const handleCancelEdit = () => {
     setRewardForm(EMPTY_FORM);
     setEditingReward(false);
@@ -155,222 +133,150 @@ export default function AdminPoints() {
     <div className="space-y-6">
       <div className="page-header">
         <h1 className="page-title">Puntos y premios</h1>
-        <p className="page-subtitle">
-          Gestioná el programa de fidelización de Mundo Prana
-        </p>
+        <p className="page-subtitle">Gestioná puntos manuales, premios y canjes</p>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-6">
+      <div className="glass-card p-5 space-y-4">
+        <h2 className="font-semibold">Agregar puntos manualmente</h2>
 
-        {/* ── AGREGAR PUNTOS MANUALMENTE ── */}
-        <div className="glass-card p-5 space-y-4">
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-            Agregar puntos a un cliente
-          </h3>
+        <div className="grid md:grid-cols-3 gap-4">
+          <div>
+            <Label>Cliente</Label>
+            <select
+              className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+              value={selectedClient}
+              onChange={(e) => setSelectedClient(e.target.value)}
+            >
+              <option value="">Seleccionar cliente</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nombre} {c.apellido}
+                </option>
+              ))}
+            </select>
+          </div>
 
-          <div className="space-y-3">
-            <div>
-              <Label>Cliente</Label>
-              <select
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-card mt-1"
-                value={selectedClient}
-                onChange={(e) => setSelectedClient(e.target.value)}
-              >
-                <option value="">Seleccionar cliente</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.nombre} {c.apellido} — {c.puntos} pts actuales
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <Label>Puntos</Label>
+            <Input
+              type="number"
+              value={puntosInput}
+              onChange={(e) => setPuntosInput(Number(e.target.value))}
+            />
+          </div>
 
-            <div>
-              <Label>Cantidad de puntos</Label>
-              <Input
-                type="number"
-                min={1}
-                placeholder="Ej: 5"
-                value={puntosInput || ''}
-                onChange={(e) => setPuntosInput(Number(e.target.value))}
-              />
-            </div>
-
-            <div>
-              <Label>Motivo</Label>
-              <Input
-                placeholder="Ej: Bonus por referido, ajuste manual..."
-                value={motivoInput}
-                onChange={(e) => setMotivoInput(e.target.value)}
-              />
-            </div>
-
-            <Button onClick={handleAddPoints} className="w-full">
-              Agregar puntos
-            </Button>
+          <div>
+            <Label>Motivo</Label>
+            <Input
+              value={motivoInput}
+              onChange={(e) => setMotivoInput(e.target.value)}
+              placeholder="Ej: ajuste manual"
+            />
           </div>
         </div>
 
-        {/* ── PREMIOS DISPONIBLES + ABM ── */}
-        <div className="glass-card p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-              Premios canjeables
-            </h3>
-            {!editingReward && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setRewardForm(EMPTY_FORM);
-                  setEditingReward(true);
-                }}
-              >
-                <Plus className="w-3 h-3 mr-1" />
-                Nuevo
-              </Button>
-            )}
+        <Button onClick={handleAddPoints}>Guardar puntos</Button>
+      </div>
+
+      <div className="glass-card p-5 space-y-4">
+        <h2 className="font-semibold">{editingReward ? 'Editar premio' : 'Crear premio'}</h2>
+
+        <div className="grid md:grid-cols-3 gap-4">
+          <div>
+            <Label>Nombre</Label>
+            <Input
+              value={rewardForm.nombre}
+              onChange={(e) => setRewardForm({ ...rewardForm, nombre: e.target.value })}
+            />
           </div>
 
-          {/* Formulario crear / editar premio */}
+          <div>
+            <Label>Descripción</Label>
+            <Input
+              value={rewardForm.descripcion}
+              onChange={(e) => setRewardForm({ ...rewardForm, descripcion: e.target.value })}
+            />
+          </div>
+
+          <div>
+            <Label>Puntos requeridos</Label>
+            <Input
+              type="number"
+              value={rewardForm.puntosRequeridos}
+              onChange={(e) =>
+                setRewardForm({ ...rewardForm, puntosRequeridos: Number(e.target.value) })
+              }
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <Button onClick={handleSaveReward}>
+            <Check className="w-4 h-4 mr-2" />
+            Guardar premio
+          </Button>
+
           {editingReward && (
-            <div className="border border-border rounded-lg p-4 space-y-3 bg-muted/30">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                {rewardForm.id ? 'Editar premio' : 'Nuevo premio'}
-              </p>
+            <Button variant="outline" onClick={handleCancelEdit}>
+              <X className="w-4 h-4 mr-2" />
+              Cancelar
+            </Button>
+          )}
+        </div>
+      </div>
 
-              <div>
-                <Label>Nombre del premio</Label>
-                <Input
-                  placeholder="Ej: 1 vianda gratis"
-                  value={rewardForm.nombre}
-                  onChange={(e) =>
-                    setRewardForm({ ...rewardForm, nombre: e.target.value })
-                  }
-                />
-              </div>
+      <div className="glass-card p-5 space-y-3">
+        <h2 className="font-semibold">Premios</h2>
 
+        {rewards.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No hay premios cargados.</p>
+        ) : (
+          rewards.map((reward) => (
+            <div
+              key={reward.id}
+              className="flex items-center justify-between border-b border-border pb-3"
+            >
               <div>
-                <Label>Descripción (opcional)</Label>
-                <Input
-                  placeholder="Ej: Una vianda a elección del menú del día"
-                  value={rewardForm.descripcion}
-                  onChange={(e) =>
-                    setRewardForm({ ...rewardForm, descripcion: e.target.value })
-                  }
-                />
-              </div>
-
-              <div>
-                <Label>Puntos requeridos para canjear</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={rewardForm.puntosRequeridos}
-                  onChange={(e) =>
-                    setRewardForm({
-                      ...rewardForm,
-                      puntosRequeridos: Number(e.target.value),
-                    })
-                  }
-                />
+                <p className="font-medium">{reward.nombre}</p>
+                <p className="text-sm text-muted-foreground">
+                  {reward.descripcion} · {reward.puntosRequeridos} puntos
+                </p>
               </div>
 
               <div className="flex gap-2">
-                <Button size="sm" onClick={handleSaveReward}>
-                  <Check className="w-3 h-3 mr-1" />
-                  Guardar
+                <Button variant="outline" size="sm" onClick={() => handleEditReward(reward)}>
+                  <Edit2 className="w-4 h-4 mr-2" />
+                  Editar
                 </Button>
-                <Button size="sm" variant="outline" onClick={handleCancelEdit}>
-                  <X className="w-3 h-3 mr-1" />
-                  Cancelar
+
+                <Button variant="destructive" size="sm" onClick={() => handleDeleteReward(reward.id)}>
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Eliminar
                 </Button>
               </div>
             </div>
-          )}
-
-          {/* Lista de premios existentes */}
-          <div className="space-y-2">
-            {rewards.length === 0 && !editingReward ? (
-              <p className="text-sm text-muted-foreground text-center py-4">
-                No hay premios configurados. Creá el primero.
-              </p>
-            ) : (
-              rewards.map((r) => (
-                <div
-                  key={r.id}
-                  className="flex items-center justify-between p-3 border border-border rounded-lg"
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm">{r.nombre}</p>
-                    {r.descripcion && (
-                      <p className="text-xs text-muted-foreground truncate">
-                        {r.descripcion}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0 ml-2">
-                    <Badge variant="secondary">{r.puntosRequeridos} pts</Badge>
-
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() => handleEditReward(r)}
-                    >
-                      <Edit2 className="w-3 h-3" />
-                    </Button>
-
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7 text-destructive hover:text-destructive"
-                      onClick={() => handleDeleteReward(r.id)}
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+          ))
+        )}
       </div>
 
-      {/* ── ÚLTIMOS CANJES ── */}
-      <div className="glass-card p-5">
-        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-          Últimos canjes
-        </h3>
+      <div className="glass-card p-5 space-y-3">
+        <h2 className="font-semibold">Canjes</h2>
 
         {redemptions.length === 0 ? (
-          <p className="text-muted-foreground text-sm text-center py-4">
-            Sin canjes todavía.
-          </p>
+          <p className="text-sm text-muted-foreground">Todavía no hay canjes registrados.</p>
         ) : (
-          <div className="space-y-2">
-            {redemptions
-              .slice(-10)
-              .reverse()
-              .map((r) => {
-                const client = clients.find((c) => c.id === r.clientId);
-                const reward = rewards.find((rw) => rw.id === r.rewardId);
-                return (
-                  <div
-                    key={r.id}
-                    className="flex items-center justify-between py-2 border-b border-border last:border-0 text-sm"
-                  >
-                    <span>
-                      {client?.nombre} {client?.apellido}
-                    </span>
-                    <span className="text-muted-foreground">
-                      {reward?.nombre ?? 'Premio'} (−{r.puntosUsados} pts)
-                    </span>
-                  </div>
-                );
-              })}
-          </div>
+          redemptions.map((r) => (
+            <div key={r.id} className="flex items-center justify-between border-b border-border pb-3">
+              <div>
+                <p className="font-medium">Canje #{r.id}</p>
+                <p className="text-sm text-muted-foreground">
+                  {new Date(r.fecha).toLocaleDateString('es-AR')} · {r.puntosUsados} pts
+                </p>
+              </div>
+
+              <Badge>{r.puntosUsados} pts</Badge>
+            </div>
+          ))
         )}
       </div>
     </div>

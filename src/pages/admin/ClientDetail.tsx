@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Copy, Send, Trash2 } from 'lucide-react';
+import { ArrowLeft, Copy, Send, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -15,7 +15,14 @@ import {
   getCantidadUsada,
   createConsumption,
   deleteConsumption,
+  updatePlan,
 } from '@/lib/store';
+import {
+  formatCurrencyAR,
+  formatDateAR,
+  getDiasEstimadosFromPlan,
+  calculateFixedPlanEstimatedEndDate,
+} from '@/lib/business';
 import { toast } from 'sonner';
 import type { Client, Plan, Consumption, PointTransaction, ConsumptionStatus } from '@/types';
 
@@ -27,6 +34,7 @@ export default function ClientDetail() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [consumptions, setConsumptions] = useState<Consumption[]>([]);
   const [points, setPoints] = useState<PointTransaction[]>([]);
+  const [newExcludedDate, setNewExcludedDate] = useState('');
 
   const [manualForm, setManualForm] = useState({
     fecha: new Date().toISOString().split('T')[0],
@@ -44,10 +52,17 @@ export default function ClientDetail() {
       return;
     }
 
+    const activePlan = getActivePlan(id) || null;
+
     setClient(c);
-    setPlan(getActivePlan(id) || null);
+    setPlan(activePlan);
     setConsumptions(getClientConsumptions(id));
     setPoints(getClientPoints(id));
+
+    setManualForm((prev) => ({
+      ...prev,
+      cantidad: activePlan?.unidadesPorRetiro || 1,
+    }));
   };
 
   useEffect(() => {
@@ -59,6 +74,17 @@ export default function ClientDetail() {
   const usadas = getCantidadUsada(plan);
   const disponibles = getDisponibles(plan);
   const accessUrl = `${window.location.origin}/cliente/${client.accessLink}`;
+
+  const diasEstimados = getDiasEstimadosFromPlan(plan);
+  const fechaEstimadaFin =
+    plan?.modalidad === 'fijo'
+      ? calculateFixedPlanEstimatedEndDate(
+          plan.fechaInicio,
+          diasEstimados,
+          plan.diasFijos || [],
+          plan.fechasExcluidas || []
+        )
+      : plan?.fechaFin || '';
 
   const handleCopyLink = async () => {
     await navigator.clipboard.writeText(accessUrl);
@@ -79,8 +105,8 @@ export default function ClientDetail() {
       return;
     }
 
-    if (manualForm.cantidad <= 0) {
-      toast.error('La cantidad debe ser mayor a 0');
+    if (manualForm.cantidad < 0) {
+      toast.error('La cantidad no puede ser negativa');
       return;
     }
 
@@ -95,12 +121,6 @@ export default function ClientDetail() {
     });
 
     toast.success('Movimiento cargado');
-    setManualForm({
-      fecha: new Date().toISOString().split('T')[0],
-      status: 'retirado',
-      cantidad: 1,
-      notas: '',
-    });
     load();
   };
 
@@ -110,6 +130,29 @@ export default function ClientDetail() {
 
     deleteConsumption(consumptionId);
     toast.success('Movimiento eliminado');
+    load();
+  };
+
+  const addExcludedDate = () => {
+    if (!plan || !newExcludedDate) return;
+
+    updatePlan(plan.id, {
+      fechasExcluidas: Array.from(new Set([...(plan.fechasExcluidas || []), newExcludedDate])).sort(),
+    });
+
+    setNewExcludedDate('');
+    toast.success('Fecha excluida agregada');
+    load();
+  };
+
+  const removeExcludedDate = (date: string) => {
+    if (!plan) return;
+
+    updatePlan(plan.id, {
+      fechasExcluidas: (plan.fechasExcluidas || []).filter((d) => d !== date),
+    });
+
+    toast.success('Fecha excluida eliminada');
     load();
   };
 
@@ -138,6 +181,7 @@ export default function ClientDetail() {
               <div className="flex flex-wrap gap-2">
                 <Badge variant="secondary">{plan.modalidad}</Badge>
                 <Badge variant="outline">{plan.tipoEntrega}</Badge>
+                <Badge variant="outline">{plan.unidadesPorRetiro} por retiro</Badge>
               </div>
 
               <div className="grid grid-cols-2 gap-3 text-sm">
@@ -159,19 +203,27 @@ export default function ClientDetail() {
                 </div>
                 <div>
                   <span className="text-muted-foreground">Precio unitario:</span>{' '}
-                  <strong>${plan.precioUnitario.toLocaleString()}</strong>
+                  <strong>{formatCurrencyAR(plan.precioUnitario)}</strong>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Abonado:</span>{' '}
-                  <strong>${plan.importeAbonado.toLocaleString()}</strong>
+                  <span className="text-muted-foreground">Total:</span>{' '}
+                  <strong>{formatCurrencyAR(plan.totalCalculado)}</strong>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Inicio:</span>{' '}
-                  <strong>{plan.fechaInicio}</strong>
+                  <strong>{formatDateAR(plan.fechaInicio)}</strong>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Fin:</span>{' '}
-                  <strong>{plan.fechaFin}</strong>
+                  <span className="text-muted-foreground">Fin estimada:</span>{' '}
+                  <strong>{fechaEstimadaFin ? formatDateAR(fechaEstimadaFin) : '-'}</strong>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Días estimados:</span>{' '}
+                  <strong>{diasEstimados}</strong>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Viandas por día:</span>{' '}
+                  <strong>{plan.unidadesPorRetiro}</strong>
                 </div>
               </div>
 
@@ -214,6 +266,39 @@ export default function ClientDetail() {
         </div>
       </div>
 
+      {plan && (
+        <div className="glass-card p-5 mb-6 space-y-4">
+          <h3 className="font-semibold">Fechas excluidas para este cliente</h3>
+
+          <div className="flex gap-2">
+            <Input
+              type="date"
+              value={newExcludedDate}
+              onChange={(e) => setNewExcludedDate(e.target.value)}
+            />
+            <Button variant="outline" onClick={addExcludedDate}>
+              Agregar fecha
+            </Button>
+          </div>
+
+          {(plan.fechasExcluidas || []).length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {(plan.fechasExcluidas || []).map((date) => (
+                <span
+                  key={date}
+                  className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs"
+                >
+                  {formatDateAR(date)}
+                  <button type="button" onClick={() => removeExcludedDate(date)}>
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="glass-card p-5 mb-6 space-y-4">
         <h3 className="font-semibold">Cargar consumo manual / histórico</h3>
 
@@ -249,7 +334,7 @@ export default function ClientDetail() {
             <Label>Cantidad</Label>
             <Input
               type="number"
-              min={1}
+              min={0}
               value={manualForm.cantidad}
               onChange={(e) =>
                 setManualForm({
@@ -277,7 +362,7 @@ export default function ClientDetail() {
                 notas: e.target.value,
               })
             }
-            placeholder="Ej: quedó una vianda a favor, se llevó doble, se corrigió conteo, etc."
+            placeholder="Ej: se llevó 2 viandas, quedó una a favor, se corrigió conteo, etc."
           />
         </div>
       </div>
@@ -296,7 +381,7 @@ export default function ClientDetail() {
               >
                 <div>
                   <p className="font-medium text-sm">
-                    {consumption.fecha} · {consumption.cantidad} vianda(s)
+                    {formatDateAR(consumption.fecha)} · {consumption.cantidad} vianda(s)
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {consumption.tipo} · {consumption.notas || 'Sin observaciones'}

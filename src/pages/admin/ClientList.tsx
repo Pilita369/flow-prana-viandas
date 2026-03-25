@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { getClients, getActivePlan, getDisponibles, getCantidadUsada, deleteClient } from '@/lib/store';
+import { formatCurrencyAR } from '@/lib/business';
 import { toast } from 'sonner';
 import type { Client, Plan } from '@/types';
 
@@ -27,7 +28,7 @@ export default function ClientList() {
   }, []);
 
   const handleDelete = (id: string, nombre: string) => {
-    const ok = window.confirm(`¿Seguro que querés eliminar a ${nombre}? Esto borra cliente, contrato, consumos y pedidos.`);
+    const ok = window.confirm(`¿Seguro que querés eliminar a ${nombre}?`);
     if (!ok) return;
 
     deleteClient(id);
@@ -78,6 +79,10 @@ export default function ClientList() {
             const usadas = getCantidadUsada(plan);
             const disponibles = getDisponibles(plan);
 
+            const precioUnitario = Number(plan?.precioUnitario ?? 0);
+            const totalCalculado = Number(plan?.totalCalculado ?? 0);
+            const unidadesPorRetiro = Number(plan?.unidadesPorRetiro ?? 1);
+
             return (
               <div
                 key={client.id}
@@ -106,6 +111,10 @@ export default function ClientList() {
                             <Badge variant="outline" className="text-xs">
                               {plan.tipoEntrega}
                             </Badge>
+
+                            <Badge variant="outline" className="text-xs">
+                              {unidadesPorRetiro} por retiro
+                            </Badge>
                           </div>
 
                           <p className="text-xs text-muted-foreground">
@@ -115,8 +124,8 @@ export default function ClientList() {
                           </p>
 
                           <p className="text-xs text-muted-foreground">
-                            Valor unitario: <strong>${plan.precioUnitario.toLocaleString()}</strong> ·
-                            Abonado: <strong>${plan.importeAbonado.toLocaleString()}</strong>
+                            Valor unitario: <strong>{formatCurrencyAR(precioUnitario)}</strong> ·
+                            Total: <strong>{formatCurrencyAR(totalCalculado)}</strong>
                           </p>
                         </div>
                       ) : (

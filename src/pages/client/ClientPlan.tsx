@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getClientByLink, getActivePlan, getDisponibles, getCantidadUsada } from '@/lib/store';
 import { Badge } from '@/components/ui/badge';
+import { formatCurrencyAR, formatDateAR } from '@/lib/business';
 import type { Plan } from '@/types';
 
 export default function ClientPlan() {
@@ -64,22 +65,22 @@ export default function ClientPlan() {
 
           <div>
             <span className="text-muted-foreground">Precio unitario:</span>{' '}
-            <strong>${plan.precioUnitario.toLocaleString()}</strong>
+            <strong>{formatCurrencyAR(plan.precioUnitario)}</strong>
           </div>
 
           <div>
             <span className="text-muted-foreground">Inicio:</span>{' '}
-            <strong>{plan.fechaInicio}</strong>
+            <strong>{formatDateAR(plan.fechaInicio)}</strong>
           </div>
 
           <div>
             <span className="text-muted-foreground">Fin:</span>{' '}
-            <strong>{plan.fechaFin}</strong>
+            <strong>{formatDateAR(plan.fechaFin)}</strong>
           </div>
 
           <div>
-            <span className="text-muted-foreground">Abonado:</span>{' '}
-            <strong>${plan.importeAbonado.toLocaleString()}</strong>
+            <span className="text-muted-foreground">Total:</span>{' '}
+            <strong>{formatCurrencyAR(plan.totalCalculado)}</strong>
           </div>
 
           <div>
@@ -87,10 +88,22 @@ export default function ClientPlan() {
             <strong className="capitalize">{plan.tipoEntrega}</strong>
           </div>
 
+          <div>
+            <span className="text-muted-foreground">Por retiro:</span>{' '}
+            <strong>{plan.unidadesPorRetiro}</strong>
+          </div>
+
           {plan.diasFijos?.length ? (
             <div className="col-span-2">
-              <span className="text-muted-foreground">Días sugeridos:</span>{' '}
+              <span className="text-muted-foreground">Días fijos:</span>{' '}
               <strong>{plan.diasFijos.join(', ')}</strong>
+            </div>
+          ) : null}
+
+          {(plan.fechasExcluidas || []).length > 0 ? (
+            <div className="col-span-2">
+              <span className="text-muted-foreground">Fechas excluidas:</span>{' '}
+              <strong>{plan.fechasExcluidas?.join(', ')}</strong>
             </div>
           ) : null}
 
