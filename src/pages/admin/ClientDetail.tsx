@@ -34,7 +34,10 @@ export default function ClientDetail() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [consumptions, setConsumptions] = useState<Consumption[]>([]);
   const [points, setPoints] = useState<PointTransaction[]>([]);
+  const [usadas, setUsadas] = useState<number>(0);
+  const [disponibles, setDisponibles] = useState<number>(0);
   const [newExcludedDate, setNewExcludedDate] = useState('');
+  const [loading, setLoading] = useState(true);
 
   const [manualForm, setManualForm] = useState({
     fecha: new Date().toISOString().split('T')[0],
@@ -43,36 +46,49 @@ export default function ClientDetail() {
     notas: '',
   });
 
-  const load = () => {
+  const load = async () => {
     if (!id) return;
+    setLoading(true);
 
-    const c = getClient(id);
-    if (!c) {
-      navigate('/admin/clientes');
-      return;
+    try {
+      const c = await getClient(id);
+      if (!c) {
+        navigate('/admin/clientes');
+        return;
+      }
+
+      const activePlan = (await getActivePlan(id)) || null;
+      const clientConsumptions = await getClientConsumptions(id);
+      const clientPoints = await getClientPoints(id);
+      const cantUsadas = await getCantidadUsada(activePlan);
+      const cantDisponibles = await getDisponibles(activePlan);
+
+      setClient(c);
+      setPlan(activePlan);
+      setConsumptions(clientConsumptions);
+      setPoints(clientPoints);
+      setUsadas(cantUsadas);
+      setDisponibles(cantDisponibles);
+
+      setManualForm((prev) => ({
+        ...prev,
+        cantidad: activePlan?.unidadesPorRetiro || 1,
+      }));
+    } catch (error) {
+      console.error('Error cargando cliente:', error);
+      toast.error('Error cargando datos del cliente');
+    } finally {
+      setLoading(false);
     }
-
-    const activePlan = getActivePlan(id) || null;
-
-    setClient(c);
-    setPlan(activePlan);
-    setConsumptions(getClientConsumptions(id));
-    setPoints(getClientPoints(id));
-
-    setManualForm((prev) => ({
-      ...prev,
-      cantidad: activePlan?.unidadesPorRetiro || 1,
-    }));
   };
 
   useEffect(() => {
     load();
   }, [id]);
 
+  if (loading) return <p className="p-4 text-muted-foreground">Cargando...</p>;
   if (!client) return null;
 
-  const usadas = getCantidadUsada(plan);
-  const disponibles = getDisponibles(plan);
   const accessUrl = `${window.location.origin}/cliente/${client.accessLink}`;
 
   const diasEstimados = getDiasEstimadosFromPlan(plan);
@@ -95,11 +111,10 @@ export default function ClientDetail() {
     const msg = encodeURIComponent(
       `Hola ${client.nombre}, te comparto tu acceso de Mundo Prana para ver tu seguimiento: ${accessUrl}`
     );
-
     window.open(`https://wa.me/${client.telefono.replace(/\D/g, '')}?text=${msg}`, '_blank');
   };
 
-  const handleManualConsumption = () => {
+  const handleManualConsumption = async () => {
     if (!plan) {
       toast.error('El cliente no tiene contrato activo');
       return;
@@ -110,50 +125,70 @@ export default function ClientDetail() {
       return;
     }
 
-    createConsumption({
-      clientId: client.id,
-      planId: plan.id,
-      fecha: manualForm.fecha,
-      status: manualForm.status,
-      tipo: 'manual',
-      cantidad: Number(manualForm.cantidad),
-      notas: manualForm.notas || undefined,
-    });
+    try {
+      await createConsumption({
+        clientId: client.id,
+        planId: plan.id,
+        fecha: manualForm.fecha,
+        status: manualForm.status,
+        tipo: 'manual',
+        cantidad: Number(manualForm.cantidad),
+        notas: manualForm.notas || undefined,
+      });
 
-    toast.success('Movimiento cargado');
-    load();
+      toast.success('Movimiento cargado');
+      await load();
+    } catch (error) {
+      console.error(error);
+      toast.error('Error al cargar el movimiento');
+    }
   };
 
-  const handleDeleteConsumption = (consumptionId: string) => {
+  const handleDeleteConsumption = async (consumptionId: string) => {
     const ok = window.confirm('¿Eliminar este movimiento?');
     if (!ok) return;
 
-    deleteConsumption(consumptionId);
-    toast.success('Movimiento eliminado');
-    load();
+    try {
+      await deleteConsumption(consumptionId);
+      toast.success('Movimiento eliminado');
+      await load();
+    } catch (error) {
+      console.error(error);
+      toast.error('Error al eliminar el movimiento');
+    }
   };
 
-  const addExcludedDate = () => {
+  const addExcludedDate = async () => {
     if (!plan || !newExcludedDate) return;
 
-    updatePlan(plan.id, {
-      fechasExcluidas: Array.from(new Set([...(plan.fechasExcluidas || []), newExcludedDate])).sort(),
-    });
+    try {
+      await updatePlan(plan.id, {
+        fechasExcluidas: Array.from(new Set([...(plan.fechasExcluidas || []), newExcludedDate])).sort(),
+      });
 
-    setNewExcludedDate('');
-    toast.success('Fecha excluida agregada');
-    load();
+      setNewExcludedDate('');
+      toast.success('Fecha excluida agregada');
+      await load();
+    } catch (error) {
+      console.error(error);
+      toast.error('Error al agregar fecha');
+    }
   };
 
-  const removeExcludedDate = (date: string) => {
+  const removeExcludedDate = async (date: string) => {
     if (!plan) return;
 
-    updatePlan(plan.id, {
-      fechasExcluidas: (plan.fechasExcluidas || []).filter((d) => d !== date),
-    });
+    try {
+      await updatePlan(plan.id, {
+        fechasExcluidas: (plan.fechasExcluidas || []).filter((d) => d !== date),
+      });
 
-    toast.success('Fecha excluida eliminada');
-    load();
+      toast.success('Fecha excluida eliminada');
+      await load();
+    } catch (error) {
+      console.error(error);
+      toast.error('Error al eliminar fecha');
+    }
   };
 
   return (

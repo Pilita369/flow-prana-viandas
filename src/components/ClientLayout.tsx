@@ -1,7 +1,7 @@
 import { ReactNode } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Home, CalendarCheck, History, Award, Trophy, Users, User, Leaf } from 'lucide-react';
+import { Home, CalendarCheck, History, Award, Trophy, Users } from 'lucide-react';
 
 export default function ClientLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -22,7 +22,11 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
       {/* Header */}
       <header className="bg-primary text-primary-foreground p-4">
         <div className="max-w-lg mx-auto flex items-center gap-3">
-          <Leaf className="w-6 h-6" />
+          <img
+            src="/logo.cuchara.webp"
+            alt="Mundo Prana"
+            className="w-8 h-8 object-contain"
+          />
           <h1 className="font-display font-bold text-lg">Mundo Prana</h1>
         </div>
       </header>

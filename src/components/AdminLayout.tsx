@@ -2,7 +2,7 @@ import { ReactNode, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
-  LayoutDashboard, Users, CalendarCheck, ShoppingBag, Trophy, Award, LogOut, Menu, X, Leaf
+  LayoutDashboard, Users, CalendarCheck, ShoppingBag, Trophy, Award, LogOut, Menu, X
 } from 'lucide-react';
 
 const navItems = [
@@ -34,9 +34,11 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
       {/* Sidebar */}
       <aside className={`fixed md:sticky top-0 left-0 z-50 h-screen w-64 bg-sidebar text-sidebar-foreground flex flex-col transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
         <div className="p-5 flex items-center gap-3 border-b border-sidebar-border">
-          <div className="w-9 h-9 rounded-lg bg-sidebar-primary flex items-center justify-center">
-            <Leaf className="w-5 h-5 text-sidebar-primary-foreground" />
-          </div>
+          <img
+            src="/logo.cuchara.webp"
+            alt="Mundo Prana"
+            className="w-9 h-9 rounded-lg object-contain"
+          />
           <div>
             <h1 className="text-base font-bold font-display text-sidebar-foreground">Mundo Prana</h1>
             <p className="text-xs text-sidebar-foreground/60">Panel Admin</p>
@@ -83,7 +85,11 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             <Menu className="w-6 h-6 text-foreground" />
           </button>
           <div className="flex items-center gap-2">
-            <Leaf className="w-5 h-5 text-primary" />
+            <img
+              src="/logo.cuchara.webp"
+              alt="Mundo Prana"
+              className="w-6 h-6 object-contain"
+            />
             <span className="font-display font-bold text-sm">Mundo Prana</span>
           </div>
           <div className="w-6" />
