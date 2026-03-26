@@ -1,80 +1,52 @@
-// src/pages/admin/AdminDashboard.tsx
-// ============================================================
-// DASHBOARD PRINCIPAL DEL ADMIN
-//
-// Este componente es el primero que se carga al entrar al
-// panel admin. Acá se hace la carga inicial de TODOS los
-// datos desde Supabase, que quedan en memoria para que
-// el resto de las pantallas los puedan usar sin recargar.
-// ============================================================
-
 import { useEffect, useState } from 'react';
-import { Users, ShoppingBag, CalendarCheck, Loader2 } from 'lucide-react';
-import {
-  loadAllData,
-  getClients,
-  getPlans,
-  getPendingOrders,
-  getTodayConsumptions,
-  getFixedClientsForToday,
-} from '@/lib/store';
+import { Users, Calendar, CheckSquare, ShoppingBag } from 'lucide-react';
+import { getDashboardStats } from '@/lib/store';
 
 export default function AdminDashboard() {
-  const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
-    clients:          0,
-    activePlans:      0,
-    todayConsumptions: 0,
-    pendingOrders:    0,
-    todayFixed:       0,
+    clientsCount: 0,
+    activePlansCount: 0,
+    todayRetirados: 0,
+    pendingOrdersCount: 0,
   });
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function init() {
-      setLoading(true);
-
-      // Carga todos los datos desde Supabase al entrar al panel
-      // Esto llena los caches en memoria para toda la sesión
-      await loadAllData();
-
-      // Calcular estadísticas del día
-      const clients  = getClients();
-      const plans    = getPlans().filter((p) => p.activo);
-      const todayC   = getTodayConsumptions();
-      const pendingO = getPendingOrders();
-      const todayF   = getFixedClientsForToday();
-
-      setStats({
-        clients:           clients.length,
-        activePlans:       plans.length,
-        todayConsumptions: todayC.length,
-        pendingOrders:     pendingO.length,
-        todayFixed:        todayF.length,
-      });
-
-      setLoading(false);
+    async function load() {
+      try {
+        const result = await getDashboardStats();
+        setStats(result);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setLoading(false);
+      }
     }
 
-    init();
+    void load();
   }, []);
 
-  // Spinner mientras carga desde Supabase
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-24">
-        <div className="text-center space-y-3">
-          <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto" />
-          <p className="text-sm text-muted-foreground">Cargando datos...</p>
-        </div>
-      </div>
-    );
-  }
-
   const cards = [
-    { label: 'Clientes',          value: stats.clients,                                       icon: Users,         color: 'text-primary'   },
-    { label: 'Planes activos',    value: stats.activePlans,                                   icon: CalendarCheck, color: 'text-success'   },
-    { label: 'Retiros hoy',       value: `${stats.todayConsumptions}/${stats.todayFixed}`,    icon: CalendarCheck, color: 'text-secondary' },
-    { label: 'Pedidos pendientes', value: stats.pendingOrders,                                icon: ShoppingBag,   color: 'text-warning'   },
+    {
+      title: 'Clientes',
+      value: stats.clientsCount,
+      icon: Users,
+    },
+    {
+      title: 'Planes activos',
+      value: stats.activePlansCount,
+      icon: Calendar,
+    },
+    {
+      title: 'Retiros hoy',
+      value: stats.todayRetirados,
+      icon: CheckSquare,
+    },
+    {
+      title: 'Pedidos pendientes',
+      value: stats.pendingOrdersCount,
+      icon: ShoppingBag,
+    },
   ];
 
   return (
@@ -84,19 +56,28 @@ export default function AdminDashboard() {
         <p className="page-subtitle">Resumen de la operación del día</p>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {cards.map((card) => (
-          <div key={card.label} className="stat-card">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                {card.label}
-              </span>
-              <card.icon className={`w-4 h-4 ${card.color}`} />
-            </div>
-            <span className="text-2xl font-bold">{card.value}</span>
-          </div>
-        ))}
-      </div>
+      {loading ? (
+        <div className="glass-card p-10 text-center text-muted-foreground">
+          Cargando dashboard...
+        </div>
+      ) : (
+        <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
+          {cards.map((card) => {
+            const Icon = card.icon;
+
+            return (
+              <div key={card.title} className="glass-card p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm text-muted-foreground">{card.title}</span>
+                  <Icon className="w-5 h-5 text-primary" />
+                </div>
+
+                <div className="text-3xl font-bold">{card.value}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

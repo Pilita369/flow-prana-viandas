@@ -9,31 +9,59 @@ import { formatCurrencyAR } from '@/lib/business';
 import { toast } from 'sonner';
 import type { Client, Plan } from '@/types';
 
-type ClientWithPlan = Client & { plan?: Plan };
+type ClientWithPlan = Client & { plan?: Plan; usadas?: number; disponibles?: number };
 
 export default function ClientList() {
   const [clients, setClients] = useState<ClientWithPlan[]>([]);
   const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  const load = () => {
-    const all = getClients().map((client) => ({
-      ...client,
-      plan: getActivePlan(client.id),
-    }));
-    setClients(all);
+  const load = async () => {
+    try {
+      setLoading(true);
+
+      const clientData = await getClients();
+
+      const all = await Promise.all(
+        clientData.map(async (client) => {
+          const plan = await getActivePlan(client.id);
+          const usadas = plan ? await getCantidadUsada(plan) : 0;
+          const disponibles = plan ? await getDisponibles(plan) : 0;
+
+          return {
+            ...client,
+            plan,
+            usadas,
+            disponibles,
+          };
+        })
+      );
+
+      setClients(all);
+    } catch (error) {
+      console.error(error);
+      toast.error('No se pudieron cargar los clientes');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    load();
+    void load();
   }, []);
 
-  const handleDelete = (id: string, nombre: string) => {
+  const handleDelete = async (id: string, nombre: string) => {
     const ok = window.confirm(`¿Seguro que querés eliminar a ${nombre}?`);
     if (!ok) return;
 
-    deleteClient(id);
-    toast.success('Cliente eliminado');
-    load();
+    try {
+      await deleteClient(id);
+      toast.success('Cliente eliminado');
+      await load();
+    } catch (error) {
+      console.error(error);
+      toast.error('No se pudo eliminar el cliente');
+    }
   };
 
   const filtered = clients.filter((c) =>
@@ -68,7 +96,11 @@ export default function ClientList() {
         </div>
       </div>
 
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div className="glass-card p-12 text-center">
+          <p className="text-muted-foreground">Cargando clientes...</p>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="glass-card p-12 text-center">
           <p className="text-muted-foreground">No hay clientes para mostrar.</p>
         </div>
@@ -76,12 +108,8 @@ export default function ClientList() {
         <div className="grid gap-3">
           {filtered.map((client) => {
             const plan = client.plan;
-            const usadas = getCantidadUsada(plan);
-            const disponibles = getDisponibles(plan);
-
-            const precioUnitario = Number(plan?.precioUnitario ?? 0);
-            const totalCalculado = Number(plan?.totalCalculado ?? 0);
-            const unidadesPorRetiro = Number(plan?.unidadesPorRetiro ?? 1);
+            const usadas = client.usadas ?? 0;
+            const disponibles = client.disponibles ?? 0;
 
             return (
               <div
@@ -113,7 +141,7 @@ export default function ClientList() {
                             </Badge>
 
                             <Badge variant="outline" className="text-xs">
-                              {unidadesPorRetiro} por retiro
+                              {plan.unidadesPorRetiro} por retiro
                             </Badge>
                           </div>
 
@@ -124,8 +152,8 @@ export default function ClientList() {
                           </p>
 
                           <p className="text-xs text-muted-foreground">
-                            Valor unitario: <strong>{formatCurrencyAR(precioUnitario)}</strong> ·
-                            Total: <strong>{formatCurrencyAR(totalCalculado)}</strong>
+                            Valor unitario: <strong>{formatCurrencyAR(plan.precioUnitario)}</strong> ·
+                            Total: <strong>{formatCurrencyAR(plan.totalCalculado)}</strong>
                           </p>
                         </div>
                       ) : (
@@ -147,7 +175,7 @@ export default function ClientList() {
                   <Button
                     variant="destructive"
                     size="sm"
-                    onClick={() => handleDelete(client.id, `${client.nombre} ${client.apellido}`)}
+                    onClick={() => void handleDelete(client.id, `${client.nombre} ${client.apellido}`)}
                   >
                     <Trash2 className="w-4 h-4 mr-2" />
                     Eliminar

@@ -57,6 +57,7 @@ export default function CreateClient() {
 
   const [newExcludedDate, setNewExcludedDate] = useState('');
   const [createdLink, setCreatedLink] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const totalCalculado = useMemo(() => {
     return calcularTotalContrato(planForm.cantidadContratada, planForm.precioUnitario);
@@ -125,60 +126,69 @@ export default function CreateClient() {
     }));
   };
 
-  const handleSave = () => {
-    if (!form.nombre || !form.apellido || !form.telefono || !form.email) {
-      toast.error('Completá nombre, apellido, teléfono y email');
-      return;
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+
+      if (!form.nombre || !form.apellido || !form.telefono || !form.email) {
+        toast.error('Completá nombre, apellido, teléfono y email');
+        return;
+      }
+
+      if (planForm.cantidadContratada <= 0) {
+        toast.error('La cantidad contratada debe ser mayor a 0');
+        return;
+      }
+
+      if (planForm.unidadesPorRetiro <= 0) {
+        toast.error('Las viandas por retiro deben ser mayores a 0');
+        return;
+      }
+
+      if (planForm.modalidad === 'fijo' && planForm.diasFijos.length === 0) {
+        toast.error('Elegí al menos un día para el plan fijo');
+        return;
+      }
+
+      const client = await createClient({
+        nombre: form.nombre,
+        apellido: form.apellido,
+        alias: form.alias || undefined,
+        telefono: form.telefono,
+        email: form.email,
+        direccion: form.direccion || undefined,
+        password: form.password || undefined,
+        referidoPor: undefined,
+      });
+
+      await createPlan({
+        clientId: client.id,
+        cantidadContratada: Number(planForm.cantidadContratada),
+        ajusteInicialUsadas: Number(planForm.ajusteInicialUsadas),
+        modalidad: planForm.modalidad,
+        precioUnitario: Number(planForm.precioUnitario),
+        fechaInicio: planForm.fechaInicio,
+        fechaFin: planForm.fechaFin,
+        tipoEntrega: planForm.tipoEntrega,
+        direccionEnvio: planForm.tipoEntrega === 'envio' ? planForm.direccionEnvio : undefined,
+        diasFijos: planForm.modalidad === 'fijo' ? planForm.diasFijos : undefined,
+        cantidadSemanal: planForm.modalidad === 'flexible' ? Number(planForm.cantidadSemanal) : undefined,
+        horaLimite: planForm.modalidad === 'flexible' ? planForm.horaLimite : undefined,
+        unidadesPorRetiro: Number(planForm.unidadesPorRetiro),
+        observaciones: planForm.observaciones || undefined,
+        fechasExcluidas: planForm.fechasExcluidas,
+      });
+
+      const link = `${window.location.origin}/cliente/${client.accessLink}`;
+      setCreatedLink(link);
+
+      toast.success('Cliente creado correctamente');
+    } catch (error) {
+      console.error(error);
+      toast.error('No se pudo crear el cliente');
+    } finally {
+      setSaving(false);
     }
-
-    if (planForm.cantidadContratada <= 0) {
-      toast.error('La cantidad contratada debe ser mayor a 0');
-      return;
-    }
-
-    if (planForm.unidadesPorRetiro <= 0) {
-      toast.error('Las viandas por retiro deben ser mayores a 0');
-      return;
-    }
-
-    if (planForm.modalidad === 'fijo' && planForm.diasFijos.length === 0) {
-      toast.error('Elegí al menos un día para el plan fijo');
-      return;
-    }
-
-    const client = createClient({
-      nombre: form.nombre,
-      apellido: form.apellido,
-      alias: form.alias || undefined,
-      telefono: form.telefono,
-      email: form.email,
-      direccion: form.direccion || undefined,
-      password: form.password || undefined,
-      referidoPor: undefined,
-    });
-
-    createPlan({
-      clientId: client.id,
-      cantidadContratada: Number(planForm.cantidadContratada),
-      ajusteInicialUsadas: Number(planForm.ajusteInicialUsadas),
-      modalidad: planForm.modalidad,
-      precioUnitario: Number(planForm.precioUnitario),
-      fechaInicio: planForm.fechaInicio,
-      fechaFin: planForm.fechaFin,
-      tipoEntrega: planForm.tipoEntrega,
-      direccionEnvio: planForm.tipoEntrega === 'envio' ? planForm.direccionEnvio : undefined,
-      diasFijos: planForm.modalidad === 'fijo' ? planForm.diasFijos : undefined,
-      cantidadSemanal: planForm.modalidad === 'flexible' ? Number(planForm.cantidadSemanal) : undefined,
-      horaLimite: planForm.modalidad === 'flexible' ? planForm.horaLimite : undefined,
-      unidadesPorRetiro: Number(planForm.unidadesPorRetiro),
-      observaciones: planForm.observaciones || undefined,
-      fechasExcluidas: planForm.fechasExcluidas,
-    });
-
-    const link = `${window.location.origin}/cliente/${client.accessLink}`;
-    setCreatedLink(link);
-
-    toast.success('Cliente creado correctamente');
   };
 
   const copyLink = async () => {
@@ -472,9 +482,9 @@ export default function CreateClient() {
         </div>
 
         <div className="flex gap-3">
-          <Button onClick={handleSave}>
+          <Button onClick={handleSave} disabled={saving}>
             <Save className="w-4 h-4 mr-2" />
-            Guardar cliente
+            {saving ? 'Guardando...' : 'Guardar cliente'}
           </Button>
         </div>
       </div>
