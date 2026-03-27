@@ -37,7 +37,7 @@ export default function ClientReferrals() {
     <div>
       <h2 className="text-xl font-display font-bold mb-4">Referidos</h2>
       <div className="glass-card p-5 text-center space-y-4">
-        <p className="text-sm text-muted-foreground">Compartí tu código y ganá 5 puntos por cada referido que compre un plan</p>
+        <p className="text-sm text-muted-foreground">Compartí tu código y ganá 40 puntos por cada referido que compre un plan</p>
         <div className="text-3xl font-bold font-mono tracking-widest text-primary">{client.codigoReferido}</div>
         <div className="flex gap-3 justify-center">
           <Button variant="outline" onClick={copy}><Copy className="w-4 h-4 mr-2" /> Copiar</Button>

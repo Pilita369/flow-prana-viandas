@@ -18,8 +18,9 @@ import { calcularTotalContrato, getDayNameFromDate, isHoliday, isExcludedForClie
 // ======================================================
 
 function generateId(): string {
-  return crypto.randomUUID();
+  return Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
 }
+
 function generateReferralCode(nombre: string): string {
   return (nombre.substring(0, 3).toUpperCase() + generateId().substring(0, 5)).toUpperCase();
 }
@@ -218,6 +219,21 @@ export async function getClientByLink(link: string): Promise<Client | undefined>
 
   if (error) {
     console.error('Error cargando cliente por link:', error.message);
+    return undefined;
+  }
+
+  return data ? rowToClient(data as Record<string, unknown>) : undefined;
+}
+
+export async function getClientByCodigoReferido(codigo: string): Promise<Client | undefined> {
+  const { data, error } = await supabase
+    .from('clients')
+    .select('*')
+    .eq('codigo_referido', codigo.toUpperCase())
+    .maybeSingle();
+
+  if (error) {
+    console.error('Error buscando código referido:', error.message);
     return undefined;
   }
 
