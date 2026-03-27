@@ -1,22 +1,20 @@
 import { useEffect, useState } from 'react';
 import { Users, Calendar, CheckSquare, ShoppingBag } from 'lucide-react';
 import { getDashboardStats } from '@/lib/store';
-import { getBusinessConfig, saveBusinessConfig, FERIADOS_ARGENTINA_2026 } from '@/lib/business';
+import { getBusinessConfig, saveBusinessConfig } from '@/lib/business';
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState({ clientsCount: 0, activePlansCount: 0, todayRetirados: 0, pendingOrdersCount: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Migración: elimina 23/3 y 24/3 del localStorage si estaban guardados
-    const migrated = localStorage.getItem('mp_feriados_v3');
+    // Migración: limpia TODOS los feriados automáticos que se hayan guardado antes
+    const migrated = localStorage.getItem('mp_feriados_v4');
     if (!migrated) {
       const config = getBusinessConfig();
-      const feriadosLimpios = config.feriados.filter(f => f !== '2026-03-23' && f !== '2026-03-24');
-      // Si no tiene ninguno de los feriados base, usar los defaults
-      const feriadosFinal = feriadosLimpios.length > 0 ? feriadosLimpios : FERIADOS_ARGENTINA_2026;
-      saveBusinessConfig({ ...config, feriados: feriadosFinal });
-      localStorage.setItem('mp_feriados_v3', 'true');
+      // Dejamos la lista vacía — Pilar la carga manualmente desde Configuración
+      saveBusinessConfig({ ...config, feriados: [] });
+      localStorage.setItem('mp_feriados_v4', 'true');
     }
 
     async function load() {

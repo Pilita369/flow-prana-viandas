@@ -7,30 +7,14 @@ export interface BusinessConfig {
   feriados: string[];
 }
 
-// Lista base de feriados 2026 — SIN 23/3 ni 24/3
-// Podés editarlos desde el panel admin en Configuración
-export const FERIADOS_ARGENTINA_2026: string[] = [
-  '2026-01-01',
-  '2026-02-16',
-  '2026-02-17',
-  '2026-04-02',
-  '2026-04-03',
-  '2026-05-01',
-  '2026-05-25',
-  '2026-06-15',
-  '2026-07-09',
-  '2026-08-17',
-  '2026-10-12',
-  '2026-11-23',
-  '2026-12-08',
-  '2026-12-25',
-];
+// Sin feriados por defecto — los cargás vos desde Configuración
+export const FERIADOS_ARGENTINA_2026: string[] = [];
 
 const DEFAULT_CONFIG: BusinessConfig = {
   precioBaseRetiro: 4500,
   precioBaseEnvio: 5200,
   whatsappNegocio: '542006060776',
-  feriados: FERIADOS_ARGENTINA_2026,
+  feriados: [],
 };
 
 export function getBusinessConfig(): BusinessConfig {
@@ -44,8 +28,7 @@ export function getBusinessConfig(): BusinessConfig {
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
-      // Usamos exactamente los feriados guardados, sin forzar ninguno
-      feriados: Array.isArray(parsed.feriados) ? parsed.feriados : FERIADOS_ARGENTINA_2026,
+      feriados: Array.isArray(parsed.feriados) ? parsed.feriados : [],
     };
   } catch {
     localStorage.setItem('mp_business_config', JSON.stringify(DEFAULT_CONFIG));
@@ -119,12 +102,10 @@ export function calculateFixedPlanEstimatedEndDate(
   fechasExcluidas: string[] = []
 ): string {
   if (!fechaInicio || diasContratados <= 0 || diasFijos.length === 0) return '';
-
   let current = toDateOnly(fechaInicio);
   let diasContados = 0;
   let ultimaFechaValida = fechaInicio;
   let guard = 0;
-
   while (diasContados < diasContratados && guard < 2000) {
     const currentStr = formatDateISO(current);
     const dayName = getDayNameFromDate(currentStr);
@@ -133,7 +114,6 @@ export function calculateFixedPlanEstimatedEndDate(
     current.setDate(current.getDate() + 1);
     guard += 1;
   }
-
   return ultimaFechaValida;
 }
 
