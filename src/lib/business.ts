@@ -7,12 +7,15 @@ export interface BusinessConfig {
   feriados: string[];
 }
 
+// Solo feriados nacionales que realmente afectan tu negocio.
+// Quitamos 23/3 y 24/3 porque ese año tus clientes sí retiraron.
+// Podés editar esta lista manualmente cuando quieras.
 export const FERIADOS_ARGENTINA_2026: string[] = [
   '2026-01-01',
   '2026-02-16',
   '2026-02-17',
-  '2026-03-23',
-  '2026-03-24',
+  // '2026-03-23',  // Quitar si tus clientes retiraron ese día
+  // '2026-03-24',  // Quitar si tus clientes retiraron ese día
   '2026-04-02',
   '2026-04-03',
   '2026-05-01',
@@ -43,10 +46,10 @@ export function getBusinessConfig(): BusinessConfig {
 
   try {
     const parsed = JSON.parse(raw) as BusinessConfig;
-
     return {
       ...parsed,
-      feriados: Array.from(new Set([...(parsed.feriados || []), ...FERIADOS_ARGENTINA_2026])).sort(),
+      // Ya NO forzamos agregar los feriados del código — usamos solo los guardados
+      feriados: parsed.feriados || FERIADOS_ARGENTINA_2026,
     };
   } catch {
     localStorage.setItem('mp_business_config', JSON.stringify(DEFAULT_CONFIG));
@@ -55,6 +58,7 @@ export function getBusinessConfig(): BusinessConfig {
 }
 
 export function saveBusinessConfig(config: BusinessConfig): void {
+  // Al guardar, limpiamos también el caché de feriados para que tome los nuevos
   localStorage.setItem('mp_business_config', JSON.stringify(config));
 }
 
@@ -116,33 +120,16 @@ export function isExcludedForClient(dateStr: string, fechasExcluidas?: string[])
   return !!fechasExcluidas?.includes(dateStr);
 }
 
-// ======================================================
-// NUEVA LÓGICA CLAVE
-// ======================================================
-// Convierte viandas totales en "días contratados estimados"
-// Ejemplo:
-// 38 viandas / 2 por retiro = 19 días
-// ======================================================
 export function calcularDiasContratadosEstimados(
   cantidadContratada: number,
   unidadesPorRetiro: number
 ): number {
   const cantidad = Number(cantidadContratada || 0);
   const porRetiro = Number(unidadesPorRetiro || 1);
-
   if (cantidad <= 0 || porRetiro <= 0) return 0;
-
   return Math.ceil(cantidad / porRetiro);
 }
 
-// ======================================================
-// Fecha estimada de finalización para plan fijo
-// Cuenta:
-// - días elegidos
-// - feriados
-// - fechas excluidas del cliente
-// - usando "días contratados", NO viandas totales
-// ======================================================
 export function calculateFixedPlanEstimatedEndDate(
   fechaInicio: string,
   diasContratados: number,
