@@ -9,20 +9,27 @@ import type { Client } from '@/types';
 export default function ClientReferrals() {
   const { accessLink } = useParams();
   const [client, setClient] = useState<Client | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!accessLink) return;
-    const c = getClientByLink(accessLink);
-    if (c) setClient(c);
+    (async () => {
+      setLoading(true);
+      try {
+        const c = await getClientByLink(accessLink);
+        if (c) setClient(c);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [accessLink]);
 
+  if (loading) return <div className="text-center py-12 text-muted-foreground">Cargando...</div>;
   if (!client) return null;
-
-  const refLink = `Usá mi código ${client.codigoReferido} en Mundo Prana Viandas y sumá puntos!`;
 
   const copy = () => { navigator.clipboard.writeText(client.codigoReferido); toast.success('Código copiado'); };
   const share = () => {
-    const msg = encodeURIComponent(refLink);
+    const msg = encodeURIComponent(`Usá mi código ${client.codigoReferido} en Mundo Prana Viandas y sumá puntos!`);
     window.open(`https://wa.me/?text=${msg}`, '_blank');
   };
 

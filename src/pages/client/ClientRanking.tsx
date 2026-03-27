@@ -8,12 +8,25 @@ export default function ClientRanking() {
   const { accessLink } = useParams();
   const [ranking, setRanking] = useState<{ client: Client; puntos: number }[]>([]);
   const [myId, setMyId] = useState<string>('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!accessLink) return;
-    const c = getClientByLink(accessLink);
-    if (c) { setMyId(c.id); setRanking(getRanking()); }
+    (async () => {
+      setLoading(true);
+      try {
+        const c = await getClientByLink(accessLink);
+        if (c) {
+          setMyId(c.id);
+          setRanking(await getRanking());
+        }
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [accessLink]);
+
+  if (loading) return <div className="text-center py-12 text-muted-foreground">Cargando...</div>;
 
   const myPos = ranking.findIndex(r => r.client.id === myId) + 1;
 
@@ -21,7 +34,6 @@ export default function ClientRanking() {
     <div>
       <h2 className="text-xl font-display font-bold mb-2">Ranking</h2>
       {myPos > 0 && <p className="text-sm text-muted-foreground mb-4">Estás en la posición #{myPos}</p>}
-
       {ranking.length === 0 ? (
         <div className="glass-card p-8 text-center text-muted-foreground">Sin datos de ranking</div>
       ) : (

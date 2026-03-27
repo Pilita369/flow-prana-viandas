@@ -18,27 +18,41 @@ export default function ClientHome() {
   const { accessLink } = useParams();
   const [client, setClient] = useState<Client | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
+  const [usadas, setUsadas] = useState(0);
+  const [disponibles, setDisponibles] = useState(0);
   const [orderCheck, setOrderCheck] = useState<{ can: boolean; reason?: string }>({ can: false });
+  const [loading, setLoading] = useState(true);
 
   const business = getBusinessConfig();
 
-  useEffect(() => {
+  const load = async () => {
     if (!accessLink) return;
+    setLoading(true);
+    try {
+      const foundClient = await getClientByLink(accessLink);
+      if (!foundClient) return;
+      setClient(foundClient);
 
-    const foundClient = getClientByLink(accessLink);
-    if (!foundClient) return;
+      const activePlan = (await getActivePlan(foundClient.id)) || null;
+      setPlan(activePlan);
 
-    setClient(foundClient);
+      const u = await getCantidadUsada(activePlan);
+      const d = await getDisponibles(activePlan);
+      setUsadas(u);
+      setDisponibles(d);
 
-    const activePlan = getActivePlan(foundClient.id) || null;
-    setPlan(activePlan);
+      const check = await canOrderTomorrow(foundClient.id);
+      setOrderCheck(check);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    setOrderCheck(canOrderTomorrow(foundClient.id));
-  }, [accessLink]);
+  useEffect(() => { load(); }, [accessLink]);
 
-  if (!client) {
-    return <div className="text-center py-12 text-muted-foreground">Cliente no encontrado</div>;
-  }
+  if (loading) return <div className="text-center py-12 text-muted-foreground">Cargando...</div>;
+
+  if (!client) return <div className="text-center py-12 text-muted-foreground">Cliente no encontrado</div>;
 
   if (!plan) {
     return (
@@ -48,29 +62,24 @@ export default function ClientHome() {
     );
   }
 
-  const usadas = getCantidadUsada(plan);
-  const disponibles = getDisponibles(plan);
-
-  const handleOrder = () => {
+  const handleOrder = async () => {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-
-    createOrder({
+    await createOrder({
       clientId: client.id,
       planId: plan.id,
       fechaEntrega: tomorrow.toISOString().split('T')[0],
       creadoPor: 'cliente',
     });
-
     toast.success('Pedido enviado para mañana');
-    setOrderCheck(canOrderTomorrow(client.id));
+    const check = await canOrderTomorrow(client.id);
+    setOrderCheck(check);
   };
 
   const handleContact = () => {
     const msg = encodeURIComponent(
       `Hola! Soy ${client.nombre} ${client.apellido}. Tengo una consulta sobre mi seguimiento de viandas.`
     );
-
     window.open(`https://wa.me/${business.whatsappNegocio}?text=${msg}`, '_blank');
   };
 
@@ -89,7 +98,6 @@ export default function ClientHome() {
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
               Tu contrato actual
             </span>
-
             <div className="flex gap-2">
               <Badge variant="secondary">{plan.modalidad}</Badge>
               <Badge variant="outline">{plan.tipoEntrega}</Badge>
@@ -98,53 +106,25 @@ export default function ClientHome() {
 
           <div className="text-3xl font-bold">
             {disponibles}
-            <span className="text-base text-muted-foreground font-normal ml-2">
-              viandas disponibles
-            </span>
+            <span className="text-base text-muted-foreground font-normal ml-2">viandas disponibles</span>
           </div>
 
           <div className="w-full bg-muted rounded-full h-2.5 mt-3">
             <div
               className="bg-primary rounded-full h-2.5 transition-all"
-              style={{
-                width: `${plan.cantidadContratada > 0 ? (usadas / plan.cantidadContratada) * 100 : 0}%`,
-              }}
+              style={{ width: `${plan.cantidadContratada > 0 ? (usadas / plan.cantidadContratada) * 100 : 0}%` }}
             />
           </div>
 
           <div className="grid grid-cols-2 gap-3 text-sm mt-4">
-            <div>
-              <span className="text-muted-foreground">Contratadas:</span>{' '}
-              <strong>{plan.cantidadContratada}</strong>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Usadas:</span>{' '}
-              <strong>{usadas}</strong>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Precio por vianda:</span>{' '}
-              <strong>{formatCurrencyAR(plan.precioUnitario)}</strong>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Total del contrato:</span>{' '}
-              <strong>{formatCurrencyAR(plan.totalCalculado)}</strong>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Inicio:</span>{' '}
-              <strong>{formatDateAR(plan.fechaInicio)}</strong>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Fin:</span>{' '}
-              <strong>{formatDateAR(plan.fechaFin)}</strong>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Entrega:</span>{' '}
-              <strong className="capitalize">{plan.tipoEntrega}</strong>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Por retiro:</span>{' '}
-              <strong>{plan.unidadesPorRetiro}</strong>
-            </div>
+            <div><span className="text-muted-foreground">Contratadas:</span> <strong>{plan.cantidadContratada}</strong></div>
+            <div><span className="text-muted-foreground">Usadas:</span> <strong>{usadas}</strong></div>
+            <div><span className="text-muted-foreground">Precio por vianda:</span> <strong>{formatCurrencyAR(plan.precioUnitario)}</strong></div>
+            <div><span className="text-muted-foreground">Total del contrato:</span> <strong>{formatCurrencyAR(plan.totalCalculado)}</strong></div>
+            <div><span className="text-muted-foreground">Inicio:</span> <strong>{formatDateAR(plan.fechaInicio)}</strong></div>
+            <div><span className="text-muted-foreground">Fin:</span> <strong>{formatDateAR(plan.fechaFin)}</strong></div>
+            <div><span className="text-muted-foreground">Entrega:</span> <strong className="capitalize">{plan.tipoEntrega}</strong></div>
+            <div><span className="text-muted-foreground">Por retiro:</span> <strong>{plan.unidadesPorRetiro}</strong></div>
           </div>
         </div>
 
@@ -153,10 +133,7 @@ export default function ClientHome() {
           <p className="text-xs text-muted-foreground mb-3">
             Si ves algo raro o querés consultar un consumo, escribinos y lo revisamos.
           </p>
-
-          <Button onClick={handleContact} className="w-full">
-            Escribir por WhatsApp
-          </Button>
+          <Button onClick={handleContact} className="w-full">Escribir por WhatsApp</Button>
         </div>
 
         {plan.modalidad === 'flexible' && (
@@ -165,16 +142,11 @@ export default function ClientHome() {
             <p className="text-xs text-muted-foreground mb-3">
               Podés pedir hasta las {plan.horaLimite || '20:00'} hs.
             </p>
-
             {orderCheck.can ? (
-              <Button onClick={handleOrder} className="w-full">
-                Pedir vianda para mañana
-              </Button>
+              <Button onClick={handleOrder} className="w-full">Pedir vianda para mañana</Button>
             ) : (
               <div>
-                <Button disabled className="w-full">
-                  Pedir vianda para mañana
-                </Button>
+                <Button disabled className="w-full">Pedir vianda para mañana</Button>
                 <p className="text-xs text-muted-foreground mt-2">{orderCheck.reason}</p>
               </div>
             )}

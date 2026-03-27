@@ -10,29 +10,34 @@ export default function ClientPoints() {
   const { accessLink } = useParams();
   const [client, setClient] = useState<Client | null>(null);
   const [transactions, setTransactions] = useState<PointTransaction[]>([]);
+  const [loading, setLoading] = useState(true);
   const rewards = getRewards();
 
-  const load = () => {
+  const load = async () => {
     if (!accessLink) return;
-    const c = getClientByLink(accessLink);
-    if (c) {
-      setClient(c);
-      setTransactions(getClientPoints(c.id).reverse());
+    setLoading(true);
+    try {
+      const c = await getClientByLink(accessLink);
+      if (c) {
+        setClient(c);
+        const pts = await getClientPoints(c.id);
+        setTransactions([...pts].reverse());
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => { load(); }, [accessLink]);
 
-  const handleRedeem = (rewardId: string) => {
+  const handleRedeem = async (rewardId: string) => {
     if (!client) return;
-    if (redeemReward(client.id, rewardId)) {
-      toast.success('¡Canje realizado!');
-      load();
-    } else {
-      toast.error('No tenés suficientes puntos');
-    }
+    const ok = await redeemReward(client.id, rewardId);
+    if (ok) { toast.success('¡Canje realizado!'); load(); }
+    else toast.error('No tenés suficientes puntos');
   };
 
+  if (loading) return <div className="text-center py-12 text-muted-foreground">Cargando...</div>;
   if (!client) return null;
 
   return (
@@ -51,7 +56,9 @@ export default function ClientPoints() {
               <p className="font-semibold text-sm">{r.nombre}</p>
               <p className="text-xs text-muted-foreground">{r.puntosRequeridos} pts</p>
             </div>
-            <Button size="sm" disabled={client.puntos < r.puntosRequeridos} onClick={() => handleRedeem(r.id)}>Canjear</Button>
+            <Button size="sm" disabled={client.puntos < r.puntosRequeridos} onClick={() => handleRedeem(r.id)}>
+              Canjear
+            </Button>
           </div>
         ))}
       </div>
