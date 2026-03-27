@@ -17,6 +17,7 @@ import DailyConsumptions from "./pages/admin/DailyConsumptions";
 import FlexibleOrders from "./pages/admin/FlexibleOrders";
 import AdminPoints from "./pages/admin/AdminPoints";
 import AdminRanking from "./pages/admin/AdminRanking";
+import AdminSettings from "./pages/admin/AdminSettings";
 
 import AdminLayout from "./components/AdminLayout";
 import AdminGuard from "./components/AdminGuard";
@@ -52,7 +53,7 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
-          
+
           {/* Admin routes */}
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route path="/admin" element={<AdminPage><AdminDashboard /></AdminPage>} />
@@ -63,6 +64,7 @@ const App = () => (
           <Route path="/admin/pedidos" element={<AdminPage><FlexibleOrders /></AdminPage>} />
           <Route path="/admin/puntos" element={<AdminPage><AdminPoints /></AdminPage>} />
           <Route path="/admin/ranking" element={<AdminPage><AdminRanking /></AdminPage>} />
+          <Route path="/admin/configuracion" element={<AdminPage><AdminSettings /></AdminPage>} />
 
           {/* Client routes */}
           <Route path="/cliente/:accessLink" element={<ClientPage><ClientHome /></ClientPage>} />

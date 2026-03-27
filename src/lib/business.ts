@@ -7,15 +7,12 @@ export interface BusinessConfig {
   feriados: string[];
 }
 
-// Solo feriados nacionales que realmente afectan tu negocio.
-// Quitamos 23/3 y 24/3 porque ese año tus clientes sí retiraron.
-// Podés editar esta lista manualmente cuando quieras.
+// Lista base de feriados 2026 — SIN 23/3 ni 24/3
+// Podés editarlos desde el panel admin en Configuración
 export const FERIADOS_ARGENTINA_2026: string[] = [
   '2026-01-01',
   '2026-02-16',
   '2026-02-17',
-  // '2026-03-23',  // Quitar si tus clientes retiraron ese día
-  // '2026-03-24',  // Quitar si tus clientes retiraron ese día
   '2026-04-02',
   '2026-04-03',
   '2026-05-01',
@@ -38,18 +35,17 @@ const DEFAULT_CONFIG: BusinessConfig = {
 
 export function getBusinessConfig(): BusinessConfig {
   const raw = localStorage.getItem('mp_business_config');
-
   if (!raw) {
     localStorage.setItem('mp_business_config', JSON.stringify(DEFAULT_CONFIG));
     return DEFAULT_CONFIG;
   }
-
   try {
     const parsed = JSON.parse(raw) as BusinessConfig;
     return {
+      ...DEFAULT_CONFIG,
       ...parsed,
-      // Ya NO forzamos agregar los feriados del código — usamos solo los guardados
-      feriados: parsed.feriados || FERIADOS_ARGENTINA_2026,
+      // Usamos exactamente los feriados guardados, sin forzar ninguno
+      feriados: Array.isArray(parsed.feriados) ? parsed.feriados : FERIADOS_ARGENTINA_2026,
     };
   } catch {
     localStorage.setItem('mp_business_config', JSON.stringify(DEFAULT_CONFIG));
@@ -58,7 +54,6 @@ export function getBusinessConfig(): BusinessConfig {
 }
 
 export function saveBusinessConfig(config: BusinessConfig): void {
-  // Al guardar, limpiamos también el caché de feriados para que tome los nuevos
   localStorage.setItem('mp_business_config', JSON.stringify(config));
 }
 
@@ -74,9 +69,7 @@ export function formatCurrencyAR(value?: number | null): string {
 }
 
 export function calcularTotalContrato(cantidadContratada: number, precioUnitario: number): number {
-  const cantidad = Number(cantidadContratada || 0);
-  const precio = Number(precioUnitario || 0);
-  return cantidad * precio;
+  return Number(cantidadContratada || 0) * Number(precioUnitario || 0);
 }
 
 export function getSuggestedPrice(tipoEntrega: DeliveryType): number {
@@ -99,15 +92,7 @@ function formatDateISO(date: Date): string {
 export function getDayNameFromDate(dateStr: string): DayOfWeek | null {
   const date = toDateOnly(dateStr);
   const day = date.getDay();
-
-  const map: Record<number, DayOfWeek> = {
-    1: 'lunes',
-    2: 'martes',
-    3: 'miercoles',
-    4: 'jueves',
-    5: 'viernes',
-  };
-
+  const map: Record<number, DayOfWeek> = { 1: 'lunes', 2: 'martes', 3: 'miercoles', 4: 'jueves', 5: 'viernes' };
   return map[day] || null;
 }
 
@@ -120,10 +105,7 @@ export function isExcludedForClient(dateStr: string, fechasExcluidas?: string[])
   return !!fechasExcluidas?.includes(dateStr);
 }
 
-export function calcularDiasContratadosEstimados(
-  cantidadContratada: number,
-  unidadesPorRetiro: number
-): number {
+export function calcularDiasContratadosEstimados(cantidadContratada: number, unidadesPorRetiro: number): number {
   const cantidad = Number(cantidadContratada || 0);
   const porRetiro = Number(unidadesPorRetiro || 1);
   if (cantidad <= 0 || porRetiro <= 0) return 0;
@@ -146,18 +128,8 @@ export function calculateFixedPlanEstimatedEndDate(
   while (diasContados < diasContratados && guard < 2000) {
     const currentStr = formatDateISO(current);
     const dayName = getDayNameFromDate(currentStr);
-
-    const cuenta =
-      !!dayName &&
-      diasFijos.includes(dayName) &&
-      !isHoliday(currentStr) &&
-      !isExcludedForClient(currentStr, fechasExcluidas);
-
-    if (cuenta) {
-      diasContados += 1;
-      ultimaFechaValida = currentStr;
-    }
-
+    const cuenta = !!dayName && diasFijos.includes(dayName) && !isHoliday(currentStr) && !isExcludedForClient(currentStr, fechasExcluidas);
+    if (cuenta) { diasContados += 1; ultimaFechaValida = currentStr; }
     current.setDate(current.getDate() + 1);
     guard += 1;
   }

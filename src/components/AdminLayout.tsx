@@ -2,7 +2,7 @@ import { ReactNode, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
-  LayoutDashboard, Users, CalendarCheck, ShoppingBag, Trophy, Award, LogOut, Menu, X
+  LayoutDashboard, Users, CalendarCheck, ShoppingBag, Trophy, Award, LogOut, Menu, Settings
 } from 'lucide-react';
 
 const navItems = [
@@ -12,6 +12,7 @@ const navItems = [
   { to: '/admin/pedidos', icon: ShoppingBag, label: 'Pedidos flexibles' },
   { to: '/admin/puntos', icon: Award, label: 'Puntos y canjes' },
   { to: '/admin/ranking', icon: Trophy, label: 'Ranking' },
+  { to: '/admin/configuracion', icon: Settings, label: 'Configuración' },
 ];
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
@@ -26,19 +27,13 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      {/* Mobile overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 bg-foreground/30 md:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
-      {/* Sidebar */}
       <aside className={`fixed md:sticky top-0 left-0 z-50 h-screen w-64 bg-sidebar text-sidebar-foreground flex flex-col transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
         <div className="p-5 flex items-center gap-3 border-b border-sidebar-border">
-          <img
-            src="/logo.cuchara.webp"
-            alt="Mundo Prana"
-            className="w-9 h-9 rounded-lg object-contain"
-          />
+          <img src="/logo.cuchara.webp" alt="Mundo Prana" className="w-9 h-9 rounded-lg object-contain" />
           <div>
             <h1 className="text-base font-bold font-display text-sidebar-foreground">Mundo Prana</h1>
             <p className="text-xs text-sidebar-foreground/60">Panel Admin</p>
@@ -54,12 +49,10 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                 to={item.to}
                 onClick={() => setSidebarOpen(false)}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  active
-                    ? 'bg-sidebar-accent text-sidebar-primary'
-                    : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'
+                  active ? 'bg-sidebar-accent text-sidebar-primary' : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'
                 }`}
               >
-                <item.icon className="w-4.5 h-4.5" />
+                <item.icon className="w-4 h-4" />
                 {item.label}
               </Link>
             );
@@ -71,25 +64,19 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             onClick={handleLogout}
             className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground transition-colors w-full"
           >
-            <LogOut className="w-4.5 h-4.5" />
+            <LogOut className="w-4 h-4" />
             Cerrar sesión
           </button>
         </div>
       </aside>
 
-      {/* Main */}
       <main className="flex-1 min-h-screen">
-        {/* Mobile header */}
         <div className="md:hidden flex items-center justify-between p-4 border-b border-border bg-card">
           <button onClick={() => setSidebarOpen(true)}>
             <Menu className="w-6 h-6 text-foreground" />
           </button>
           <div className="flex items-center gap-2">
-            <img
-              src="/logo.cuchara.webp"
-              alt="Mundo Prana"
-              className="w-6 h-6 object-contain"
-            />
+            <img src="/logo.cuchara.webp" alt="Mundo Prana" className="w-6 h-6 object-contain" />
             <span className="font-display font-bold text-sm">Mundo Prana</span>
           </div>
           <div className="w-6" />

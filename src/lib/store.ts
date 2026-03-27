@@ -18,7 +18,7 @@ import { calcularTotalContrato, getDayNameFromDate, isHoliday, isExcludedForClie
 // ======================================================
 
 function generateId(): string {
-  return Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
+  return crypto.randomUUID();
 }
 
 function generateReferralCode(nombre: string): string {
@@ -732,20 +732,10 @@ export async function addPoints(clientId: string, puntos: number, motivo: string
 
 export function getRewards(): Reward[] {
   return getItem('mp_rewards', [
-    {
-      id: '1',
-      nombre: '1 Vianda gratis',
-      descripcion: 'Canje por una vianda',
-      puntosRequeridos: 10,
-      activo: true,
-    },
-    {
-      id: '2',
-      nombre: 'Producto especial',
-      descripcion: 'Canje por un producto especial',
-      puntosRequeridos: 20,
-      activo: true,
-    },
+    { id: 'r1', nombre: '🥗 1 Vianda extra', descripcion: 'Canje por una vianda de la carta fija', puntosRequeridos: 100, activo: true },
+    { id: 'r2', nombre: '🎁 Postre o budín gratis', descripcion: 'Canje por un producto elaborado', puntosRequeridos: 200, activo: true },
+    { id: 'r3', nombre: '💸 15% off en productos extras', descripcion: 'Compra productos elaborados por Mundo Prana', puntosRequeridos: 350, activo: true },
+    { id: 'r4', nombre: '🌟 5 viandas', descripcion: 'Viandas de la carta congelada a eleccion', puntosRequeridos: 500, activo: true },
   ]);
 }
 
