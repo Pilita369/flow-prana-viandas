@@ -7,22 +7,30 @@ import type { FlexibleOrder, Client } from '@/types';
 
 export default function FlexibleOrders() {
   const [orders, setOrders] = useState<(FlexibleOrder & { client?: Client })[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const load = useCallback(() => {
-    const clients = getClients();
-    const all = getFlexibleOrders()
-      .sort((a, b) => new Date(b.fechaPedido).getTime() - new Date(a.fechaPedido).getTime())
-      .map(o => ({ ...o, client: clients.find(c => c.id === o.clientId) }));
-    setOrders(all);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const clients = await getClients();
+      const all = (await getFlexibleOrders())
+        .sort((a, b) => new Date(b.fechaPedido).getTime() - new Date(a.fechaPedido).getTime())
+        .map(o => ({ ...o, client: clients.find(c => c.id === o.clientId) }));
+      setOrders(all);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
-  const handleStatus = (id: string, status: 'confirmado' | 'cancelado') => {
-    updateOrderStatus(id, status);
+  const handleStatus = async (id: string, status: 'confirmado' | 'cancelado') => {
+    await updateOrderStatus(id, status);
     toast.success(`Pedido ${status}`);
-    load();
+    await load();
   };
+
+  if (loading) return <div className="text-center py-12 text-muted-foreground">Cargando...</div>;
 
   const pending = orders.filter(o => o.status === 'pendiente');
   const others = orders.filter(o => o.status !== 'pendiente');
