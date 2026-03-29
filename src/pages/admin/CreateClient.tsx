@@ -35,7 +35,7 @@ export default function CreateClient() {
     apellido: '',
     alias: '',
     telefono: '',
-    email: '',
+    email: '',          // opcional
     direccion: '',
     password: '',
     codigoReferidoPor: '',
@@ -69,20 +69,20 @@ export default function CreateClient() {
   const diasContratadosEstimados = useMemo(() => calcularDiasContratadosEstimados(planForm.cantidadContratada, planForm.unidadesPorRetiro), [planForm.cantidadContratada, planForm.unidadesPorRetiro]);
 
   const toggleDay = (day: DayOfWeek) => {
-    setPlanForm((prev) => ({
+    setPlanForm(prev => ({
       ...prev,
-      diasFijos: prev.diasFijos.includes(day) ? prev.diasFijos.filter((d) => d !== day) : [...prev.diasFijos, day],
+      diasFijos: prev.diasFijos.includes(day) ? prev.diasFijos.filter(d => d !== day) : [...prev.diasFijos, day],
     }));
   };
 
   useEffect(() => {
-    setPlanForm((prev) => ({ ...prev, precioUnitario: getSuggestedPrice(prev.tipoEntrega) }));
+    setPlanForm(prev => ({ ...prev, precioUnitario: getSuggestedPrice(prev.tipoEntrega) }));
   }, [planForm.tipoEntrega]);
 
   useEffect(() => {
     if (planForm.modalidad === 'fijo') {
       const fin = calculateFixedPlanEstimatedEndDate(planForm.fechaInicio, diasContratadosEstimados, planForm.diasFijos, planForm.fechasExcluidas);
-      setPlanForm((prev) => ({ ...prev, fechaFin: fin }));
+      setPlanForm(prev => ({ ...prev, fechaFin: fin }));
     }
   }, [planForm.modalidad, planForm.fechaInicio, planForm.diasFijos, planForm.fechasExcluidas, diasContratadosEstimados]);
 
@@ -101,18 +101,23 @@ export default function CreateClient() {
 
   const addExcludedDate = () => {
     if (!newExcludedDate) return;
-    setPlanForm((prev) => ({ ...prev, fechasExcluidas: Array.from(new Set([...prev.fechasExcluidas, newExcludedDate])).sort() }));
+    setPlanForm(prev => ({ ...prev, fechasExcluidas: Array.from(new Set([...prev.fechasExcluidas, newExcludedDate])).sort() }));
     setNewExcludedDate('');
   };
 
   const removeExcludedDate = (date: string) => {
-    setPlanForm((prev) => ({ ...prev, fechasExcluidas: prev.fechasExcluidas.filter((d) => d !== date) }));
+    setPlanForm(prev => ({ ...prev, fechasExcluidas: prev.fechasExcluidas.filter(d => d !== date) }));
   };
 
   const handleSave = async () => {
     try {
       setSaving(true);
-      if (!form.nombre || !form.apellido || !form.telefono || !form.email) { toast.error('Completá nombre, apellido, teléfono y email'); return; }
+
+      // Solo nombre, apellido y teléfono son obligatorios. Email es opcional.
+      if (!form.nombre || !form.apellido || !form.telefono) {
+        toast.error('Completá nombre, apellido y teléfono');
+        return;
+      }
       if (planForm.cantidadContratada <= 0) { toast.error('La cantidad contratada debe ser mayor a 0'); return; }
       if (planForm.unidadesPorRetiro <= 0) { toast.error('Las viandas por retiro deben ser mayores a 0'); return; }
       if (planForm.modalidad === 'fijo' && planForm.diasFijos.length === 0) { toast.error('Elegí al menos un día para el plan fijo'); return; }
@@ -130,7 +135,7 @@ export default function CreateClient() {
         apellido: form.apellido,
         alias: form.alias || undefined,
         telefono: form.telefono,
-        email: form.email,
+        email: form.email || '',        // vacío si no se ingresó
         direccion: form.direccion || undefined,
         password: form.password || undefined,
         referidoPor: referidorId,
@@ -154,7 +159,6 @@ export default function CreateClient() {
         fechasExcluidas: planForm.fechasExcluidas,
       });
 
-      // Sumar puntos al referidor
       if (referidorId) {
         await addPoints(referidorId, PUNTOS_POR_REFERIDO, `Referido: ${form.nombre} ${form.apellido} se unió`);
         toast.success(`+${PUNTOS_POR_REFERIDO} puntos sumados al referidor`);
@@ -173,7 +177,7 @@ export default function CreateClient() {
   const copyLink = async () => { if (!createdLink) return; await navigator.clipboard.writeText(createdLink); toast.success('Link copiado'); };
   const sendWhatsApp = () => {
     if (!createdLink || !form.telefono) return;
-    const msg = encodeURIComponent(`Hola ${form.nombre}, te comparto tu acceso a Mundo Prana para ver tu seguimiento: ${createdLink}`);
+    const msg = encodeURIComponent(`Hola ${form.nombre}! Te comparto tu acceso a Mundo Prana para seguir tu plan de viandas: ${createdLink}`);
     window.open(`https://wa.me/${form.telefono.replace(/\D/g, '')}?text=${msg}`, '_blank');
   };
 
@@ -213,24 +217,28 @@ export default function CreateClient() {
         <div className="glass-card p-6 space-y-4">
           <h2 className="font-semibold">Datos personales</h2>
           <div className="grid md:grid-cols-2 gap-4">
-            <div><Label>Nombre</Label><Input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} /></div>
-            <div><Label>Apellido</Label><Input value={form.apellido} onChange={(e) => setForm({ ...form, apellido: e.target.value })} /></div>
-            <div><Label>Teléfono</Label><Input value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} /></div>
-            <div><Label>Email</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
-            <div><Label>Alias para ranking</Label><Input value={form.alias} onChange={(e) => setForm({ ...form, alias: e.target.value })} placeholder="Ej: La Reina del Tupper" /></div>
-            <div><Label>Dirección (opcional)</Label><Input value={form.direccion} onChange={(e) => setForm({ ...form, direccion: e.target.value })} /></div>
+            <div><Label>Nombre <span className="text-destructive">*</span></Label><Input value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} /></div>
+            <div><Label>Apellido <span className="text-destructive">*</span></Label><Input value={form.apellido} onChange={e => setForm({ ...form, apellido: e.target.value })} /></div>
+            <div><Label>Teléfono <span className="text-destructive">*</span></Label><Input value={form.telefono} onChange={e => setForm({ ...form, telefono: e.target.value })} placeholder="2996123456" /></div>
+            <div>
+              <Label>Email <span className="text-muted-foreground text-xs">(opcional)</span></Label>
+              <Input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="Si no lo tenés, dejalo vacío" />
+            </div>
+            <div><Label>Alias para ranking <span className="text-muted-foreground text-xs">(opcional)</span></Label><Input value={form.alias} onChange={e => setForm({ ...form, alias: e.target.value })} placeholder="Ej: La Reina del Tupper" /></div>
+            <div><Label>Dirección <span className="text-muted-foreground text-xs">(opcional)</span></Label><Input value={form.direccion} onChange={e => setForm({ ...form, direccion: e.target.value })} /></div>
+
             <div className="md:col-span-2">
-              <Label>Código de quien lo refirió (opcional)</Label>
+              <Label>Código de quien lo refirió <span className="text-muted-foreground text-xs">(opcional)</span></Label>
               <Input
                 className={`mt-1 ${referidorNombre ? 'border-green-500' : ''}`}
                 value={form.codigoReferidoPor}
-                onChange={(e) => setForm({ ...form, codigoReferidoPor: e.target.value.toUpperCase() })}
+                onChange={e => setForm({ ...form, codigoReferidoPor: e.target.value.toUpperCase() })}
                 placeholder="Ej: PIL4A2"
               />
               {buscandoReferidor && <p className="text-xs text-muted-foreground mt-1">Buscando...</p>}
               {!buscandoReferidor && form.codigoReferidoPor && (
                 referidorNombre
-                  ? <p className="text-xs text-green-600 mt-1">✓ Referidor encontrado: <strong>{referidorNombre}</strong> — recibirá +{PUNTOS_POR_REFERIDO} pts al guardar</p>
+                  ? <p className="text-xs text-green-600 mt-1">✓ Referidor: <strong>{referidorNombre}</strong> — recibirá +{PUNTOS_POR_REFERIDO} pts al guardar</p>
                   : <p className="text-xs text-destructive mt-1">✗ Código no encontrado</p>
               )}
             </div>
@@ -240,30 +248,30 @@ export default function CreateClient() {
         <div className="glass-card p-6 space-y-4">
           <h2 className="font-semibold">Contrato / plan</h2>
           <div className="grid md:grid-cols-2 gap-4">
-            <div><Label>Cantidad contratada</Label><Input type="number" min={1} value={planForm.cantidadContratada} onChange={(e) => setPlanForm({ ...planForm, cantidadContratada: Number(e.target.value) })} /></div>
-            <div><Label>Ajuste inicial usado</Label><Input type="number" min={0} value={planForm.ajusteInicialUsadas} onChange={(e) => setPlanForm({ ...planForm, ajusteInicialUsadas: Number(e.target.value) })} /></div>
+            <div><Label>Cantidad contratada</Label><Input type="number" min={1} value={planForm.cantidadContratada} onChange={e => setPlanForm({ ...planForm, cantidadContratada: Number(e.target.value) })} /></div>
+            <div><Label>Ajuste inicial usado</Label><Input type="number" min={0} value={planForm.ajusteInicialUsadas} onChange={e => setPlanForm({ ...planForm, ajusteInicialUsadas: Number(e.target.value) })} /></div>
             <div>
               <Label>Modalidad</Label>
-              <select className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm" value={planForm.modalidad} onChange={(e) => setPlanForm({ ...planForm, modalidad: e.target.value as PlanModality })}>
+              <select className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm" value={planForm.modalidad} onChange={e => setPlanForm({ ...planForm, modalidad: e.target.value as PlanModality })}>
                 <option value="fijo">Fijo</option>
                 <option value="flexible">Flexible</option>
               </select>
             </div>
             <div>
               <Label>Tipo de entrega</Label>
-              <select className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm" value={planForm.tipoEntrega} onChange={(e) => setPlanForm({ ...planForm, tipoEntrega: e.target.value as DeliveryType })}>
+              <select className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm" value={planForm.tipoEntrega} onChange={e => setPlanForm({ ...planForm, tipoEntrega: e.target.value as DeliveryType })}>
                 <option value="retiro">Retiro en el local</option>
                 <option value="envio">Envío</option>
               </select>
             </div>
-            <div><Label>Precio unitario por vianda</Label><Input type="number" min={0} value={planForm.precioUnitario} onChange={(e) => setPlanForm({ ...planForm, precioUnitario: Number(e.target.value) })} /></div>
+            <div><Label>Precio unitario por vianda</Label><Input type="number" min={0} value={planForm.precioUnitario} onChange={e => setPlanForm({ ...planForm, precioUnitario: Number(e.target.value) })} /></div>
             <div><Label>Total calculado</Label><Input value={formatCurrencyAR(totalCalculado)} readOnly /></div>
-            <div><Label>Viandas por retiro</Label><Input type="number" min={1} value={planForm.unidadesPorRetiro} onChange={(e) => setPlanForm({ ...planForm, unidadesPorRetiro: Number(e.target.value) })} /></div>
+            <div><Label>Viandas por retiro</Label><Input type="number" min={1} value={planForm.unidadesPorRetiro} onChange={e => setPlanForm({ ...planForm, unidadesPorRetiro: Number(e.target.value) })} /></div>
             <div><Label>Días contratados estimados</Label><Input value={String(diasContratadosEstimados)} readOnly /></div>
-            <div><Label>Fecha de inicio</Label><Input type="date" value={planForm.fechaInicio} onChange={(e) => setPlanForm({ ...planForm, fechaInicio: e.target.value })} /></div>
+            <div><Label>Fecha de inicio</Label><Input type="date" value={planForm.fechaInicio} onChange={e => setPlanForm({ ...planForm, fechaInicio: e.target.value })} /></div>
             <div><Label>Fecha estimada de finalización</Label><Input value={planForm.fechaFin ? formatDateAR(planForm.fechaFin) : ''} readOnly /></div>
             {planForm.tipoEntrega === 'envio' && (
-              <div className="md:col-span-2"><Label>Dirección de envío</Label><Input value={planForm.direccionEnvio} onChange={(e) => setPlanForm({ ...planForm, direccionEnvio: e.target.value })} /></div>
+              <div className="md:col-span-2"><Label>Dirección de envío</Label><Input value={planForm.direccionEnvio} onChange={e => setPlanForm({ ...planForm, direccionEnvio: e.target.value })} /></div>
             )}
           </div>
 
@@ -271,7 +279,7 @@ export default function CreateClient() {
             <div className="space-y-3">
               <Label>Días de retiro</Label>
               <div className="flex flex-wrap gap-4">
-                {DAYS.map((day) => (
+                {DAYS.map(day => (
                   <label key={day.value} className="flex items-center gap-2 text-sm">
                     <input type="checkbox" checked={planForm.diasFijos.includes(day.value)} onChange={() => toggleDay(day.value)} />
                     {day.label}
@@ -283,20 +291,20 @@ export default function CreateClient() {
 
           {planForm.modalidad === 'flexible' && (
             <div className="grid md:grid-cols-2 gap-4">
-              <div><Label>Cantidad semanal</Label><Input type="number" min={1} value={planForm.cantidadSemanal} onChange={(e) => setPlanForm({ ...planForm, cantidadSemanal: Number(e.target.value) })} /></div>
-              <div><Label>Hora límite para pedir</Label><Input type="time" value={planForm.horaLimite} onChange={(e) => setPlanForm({ ...planForm, horaLimite: e.target.value })} /></div>
+              <div><Label>Cantidad semanal</Label><Input type="number" min={1} value={planForm.cantidadSemanal} onChange={e => setPlanForm({ ...planForm, cantidadSemanal: Number(e.target.value) })} /></div>
+              <div><Label>Hora límite para pedir</Label><Input type="time" value={planForm.horaLimite} onChange={e => setPlanForm({ ...planForm, horaLimite: e.target.value })} /></div>
             </div>
           )}
 
           <div className="space-y-3">
             <Label>Fechas excluidas para este cliente</Label>
             <div className="flex gap-2">
-              <Input type="date" value={newExcludedDate} onChange={(e) => setNewExcludedDate(e.target.value)} />
+              <Input type="date" value={newExcludedDate} onChange={e => setNewExcludedDate(e.target.value)} />
               <Button type="button" variant="outline" onClick={addExcludedDate}>Agregar fecha</Button>
             </div>
             {planForm.fechasExcluidas.length > 0 && (
               <div className="flex flex-wrap gap-2">
-                {planForm.fechasExcluidas.map((date) => (
+                {planForm.fechasExcluidas.map(date => (
                   <span key={date} className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs">
                     {formatDateAR(date)}
                     <button type="button" onClick={() => removeExcludedDate(date)}><X className="w-3 h-3" /></button>
@@ -308,7 +316,7 @@ export default function CreateClient() {
 
           <div>
             <Label>Observaciones internas</Label>
-            <Textarea value={planForm.observaciones} onChange={(e) => setPlanForm({ ...planForm, observaciones: e.target.value })} placeholder="Ej: contrato 19 días del mes, 2 viandas diarias." />
+            <Textarea value={planForm.observaciones} onChange={e => setPlanForm({ ...planForm, observaciones: e.target.value })} placeholder="Ej: contrato 19 días del mes, 2 viandas diarias." />
           </div>
         </div>
 

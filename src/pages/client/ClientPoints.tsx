@@ -7,12 +7,29 @@ import { toast } from 'sonner';
 import { RefreshCw, Star, ShoppingBag, Users, Zap, Gift } from 'lucide-react';
 import type { Client, PointTransaction } from '@/types';
 
-const HOW_TO_EARN = [
-  { icon: 'refresh', label: 'Renovación mensual', puntos: 30, descripcion: 'Cada vez que renovás tu plan' },
-  { icon: 'star', label: 'Plan completo del mes', puntos: 50, descripcion: 'Si no faltás ningún día del mes' },
-  { icon: 'bag', label: 'Compra producto extra', puntos: 15, descripcion: 'Pan, budín, postre u otra vianda' },
-  { icon: 'users', label: 'Referido que compra', puntos: 40, descripcion: 'Cuando alguien se une con tu código' },
+// Lee las reglas desde localStorage (igual que AdminPoints)
+// Si no hay nada guardado, usa estos defaults
+interface PointRule {
+  id: string;
+  label: string;
+  descripcion: string;
+  puntos: number;
+  icon: string;
+}
+
+const DEFAULT_RULES: PointRule[] = [
+  { id: 'renovacion', label: 'Renovación mensual', descripcion: 'Cada vez que renovás tu plan', puntos: 30, icon: 'refresh' },
+  { id: 'plan_completo', label: 'Plan completo del mes', descripcion: 'Si no faltás ningún día del mes', puntos: 20, icon: 'star' },
+  { id: 'producto_extra', label: 'Compra producto extra', descripcion: 'Pan, budín, postre u otra vianda', puntos: 15, icon: 'bag' },
+  { id: 'referido', label: 'Referido que compra', descripcion: 'Cuando alguien se une con tu código', puntos: 40, icon: 'users' },
 ];
+
+function getRules(): PointRule[] {
+  try {
+    const saved = localStorage.getItem('mp_point_rules');
+    return saved ? JSON.parse(saved) : DEFAULT_RULES;
+  } catch { return DEFAULT_RULES; }
+}
 
 function EarnIcon({ type }: { type: string }) {
   const cls = 'w-4 h-4';
@@ -28,6 +45,7 @@ export default function ClientPoints() {
   const [transactions, setTransactions] = useState<PointTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const rewards = getRewards();
+  const rules = getRules(); // Lee desde localStorage — se actualiza cuando el admin cambia las reglas
 
   const load = async () => {
     if (!accessLink) return;
@@ -49,7 +67,7 @@ export default function ClientPoints() {
   const handleRedeem = async (rewardId: string) => {
     if (!client) return;
     const ok = await redeemReward(client.id, rewardId);
-    if (ok) { toast.success('Canje realizado! Avisanos para hacerlo efectivo'); load(); }
+    if (ok) { toast.success('Canje realizado! Avisanos para hacerlo efectivo 🎉'); load(); }
     else toast.error('No tenés suficientes puntos');
   };
 
@@ -65,6 +83,7 @@ export default function ClientPoints() {
     <div className="space-y-5">
       <h2 className="text-xl font-display font-bold">Mis puntos</h2>
 
+      {/* Total de puntos y barra de progreso */}
       <div className="glass-card p-5 text-center">
         <div className="text-5xl font-bold text-primary">{client.puntos}</div>
         <p className="text-sm text-muted-foreground mt-1">puntos acumulados</p>
@@ -79,10 +98,11 @@ export default function ClientPoints() {
           </div>
         )}
         {!nextReward && rewards.length > 0 && (
-          <p className="text-xs text-green-600 mt-3 font-medium">Podes canjear todos los premios!</p>
+          <p className="text-xs text-green-600 mt-3 font-medium">¡Podés canjear todos los premios!</p>
         )}
       </div>
 
+      {/* Premios */}
       <div>
         <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
           <Gift className="w-4 h-4" />Premios
@@ -101,7 +121,11 @@ export default function ClientPoints() {
                 </div>
                 <div className="flex flex-col items-end gap-1 shrink-0">
                   <Badge variant={canRedeem ? 'default' : 'secondary'}>{r.puntosRequeridos} pts</Badge>
-                  {canRedeem && <Button size="sm" onClick={() => handleRedeem(r.id)} className="text-xs h-7">Canjear</Button>}
+                  {canRedeem && (
+                    <Button size="sm" onClick={() => handleRedeem(r.id)} className="text-xs h-7">
+                      Canjear
+                    </Button>
+                  )}
                 </div>
               </div>
             );
@@ -109,12 +133,13 @@ export default function ClientPoints() {
         </div>
       </div>
 
+      {/* Cómo sumar puntos — lee desde localStorage, igual que el admin */}
       <div>
         <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
-          <Zap className="w-4 h-4" />Como sumar puntos
+          <Zap className="w-4 h-4" />Cómo sumar puntos
         </h3>
         <div className="space-y-2">
-          {HOW_TO_EARN.map((item, i) => (
+          {rules.map((item, i) => (
             <div key={i} className="glass-card p-3 flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
                 <EarnIcon type={item.icon} />
@@ -129,6 +154,7 @@ export default function ClientPoints() {
         </div>
       </div>
 
+      {/* Historial */}
       {transactions.length > 0 && (
         <div>
           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Historial</h3>
