@@ -2,7 +2,7 @@ import { ReactNode, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
-  LayoutDashboard, Users, CalendarCheck, ShoppingBag, Trophy, Award, LogOut, Menu, Settings
+  LayoutDashboard, Users, CalendarCheck, ShoppingBag, Trophy, Award, LogOut, Menu, Settings, BarChart2
 } from 'lucide-react';
 
 const navItems = [
@@ -12,6 +12,7 @@ const navItems = [
   { to: '/admin/pedidos', icon: ShoppingBag, label: 'Pedidos flexibles' },
   { to: '/admin/puntos', icon: Award, label: 'Puntos y canjes' },
   { to: '/admin/ranking', icon: Trophy, label: 'Ranking' },
+  { to: '/admin/estadisticas', icon: BarChart2, label: 'Estadísticas' },
   { to: '/admin/configuracion', icon: Settings, label: 'Configuración' },
 ];
 

@@ -74,6 +74,9 @@ export interface Plan {
   tipoEntrega: DeliveryType;
   direccionEnvio?: string;
 
+  // Costo de envío separado del precio de la vianda (solo cuando tipoEntrega = 'envio')
+  costoEnvio?: number;
+
   // Cuántas viandas se descuentan cada vez que marcás "retiró"
   // Ejemplo: 2 si una familia se lleva dos por día
   unidadesPorRetiro: number;
@@ -153,4 +156,20 @@ export interface Redemption {
   rewardId: string;
   fecha: string;
   puntosUsados: number;
+}
+
+// ==============================================
+// NOTAS DE CRÉDITO / AJUSTES A FAVOR
+// ==============================================
+export type CreditNoteTipo = 'saldo_envio' | 'vianda_favor' | 'descuento' | 'atencion' | 'otro';
+
+export interface CreditNote {
+  id: string;
+  clientId: string;
+  tipo: CreditNoteTipo;
+  descripcion: string;
+  monto?: number;       // en pesos, si aplica
+  cantidad?: number;    // en viandas, si aplica
+  fecha: string;
+  aplicado: boolean;    // para marcar cuando ya se usó/descontó
 }

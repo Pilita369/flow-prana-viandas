@@ -7,6 +7,8 @@ import type {
   PointTransaction,
   Reward,
   Redemption,
+  CreditNote,
+  CreditNoteTipo,
   DayOfWeek,
   ConsumptionStatus,
   OrderStatus,
@@ -125,6 +127,7 @@ function rowToPlan(row: Record<string, unknown>): Plan {
     fechaFin: row.fecha_fin as string,
     tipoEntrega: ((row.tipo_entrega as 'retiro' | 'envio') || 'retiro'),
     direccionEnvio: row.direccion_envio as string | undefined,
+    costoEnvio: row.costo_envio as number | undefined,
     unidadesPorRetiro: (row.unidades_por_retiro as number) || 1,
     activo: (row.activo as boolean) ?? true,
     diasFijos: row.dias_fijos as DayOfWeek[] | undefined,
@@ -389,6 +392,7 @@ export async function createPlan(
     fecha_fin: data.fechaFin,
     tipo_entrega: data.tipoEntrega || 'retiro',
     direccion_envio: data.direccionEnvio || null,
+    costo_envio: data.costoEnvio || null,
     unidades_por_retiro: data.unidadesPorRetiro || 1,
     activo: true,
     dias_fijos: data.diasFijos || null,
@@ -424,6 +428,7 @@ export async function updatePlan(id: string, data: Partial<Plan>): Promise<Plan 
   if (data.fechaFin !== undefined) payload.fecha_fin = data.fechaFin;
   if (data.tipoEntrega !== undefined) payload.tipo_entrega = data.tipoEntrega;
   if (data.direccionEnvio !== undefined) payload.direccion_envio = data.direccionEnvio;
+  if (data.costoEnvio !== undefined) payload.costo_envio = data.costoEnvio;
   if (data.unidadesPorRetiro !== undefined) payload.unidades_por_retiro = data.unidadesPorRetiro;
   if (data.activo !== undefined) payload.activo = data.activo;
   if (data.diasFijos !== undefined) payload.dias_fijos = data.diasFijos;
@@ -454,6 +459,18 @@ export async function updatePlan(id: string, data: Partial<Plan>): Promise<Plan 
 
   clearCache();
   return updated ? rowToPlan(updated as Record<string, unknown>) : undefined;
+}
+
+export async function renovarPlan(
+  clientId: string,
+  data: Omit<Plan, 'id' | 'activo' | 'totalCalculado'>,
+  puntosRenovacion: number = 30
+): Promise<Plan> {
+  const newPlan = await createPlan(data);
+  if (puntosRenovacion > 0) {
+    await addPoints(clientId, puntosRenovacion, 'Renovación de plan');
+  }
+  return newPlan;
 }
 
 export async function getPlanConsumptions(planId: string): Promise<Consumption[]> {
@@ -763,6 +780,37 @@ export async function redeemReward(clientId: string, rewardId: string): Promise<
   setItem('mp_redemptions', redemptions);
   await addPoints(clientId, -reward.puntosRequeridos, `Canje: ${reward.nombre}`);
   return true;
+}
+
+// ======================================================
+// NOTAS DE CRÉDITO / AJUSTES A FAVOR
+// ======================================================
+
+export function getCreditNotes(clientId: string): CreditNote[] {
+  const all = getItem<CreditNote[]>('mp_credit_notes', []);
+  return all.filter(n => n.clientId === clientId).sort((a, b) => b.fecha.localeCompare(a.fecha));
+}
+
+export function saveCreditNote(data: Omit<CreditNote, 'id' | 'fecha' | 'aplicado'>): CreditNote {
+  const all = getItem<CreditNote[]>('mp_credit_notes', []);
+  const note: CreditNote = {
+    id: generateId(),
+    fecha: new Date().toISOString(),
+    aplicado: false,
+    ...data,
+  };
+  setItem('mp_credit_notes', [...all, note]);
+  return note;
+}
+
+export function toggleCreditNote(id: string): void {
+  const all = getItem<CreditNote[]>('mp_credit_notes', []);
+  setItem('mp_credit_notes', all.map(n => n.id === id ? { ...n, aplicado: !n.aplicado } : n));
+}
+
+export function deleteCreditNote(id: string): void {
+  const all = getItem<CreditNote[]>('mp_credit_notes', []);
+  setItem('mp_credit_notes', all.filter(n => n.id !== id));
 }
 
 // ======================================================

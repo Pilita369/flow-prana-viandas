@@ -18,6 +18,7 @@ import FlexibleOrders from "./pages/admin/FlexibleOrders";
 import AdminPoints from "./pages/admin/AdminPoints";
 import AdminRanking from "./pages/admin/AdminRanking";
 import AdminSettings from "./pages/admin/AdminSettings";
+import AdminStats from "./pages/admin/AdminStats";
 
 import AdminLayout from "./components/AdminLayout";
 import AdminGuard from "./components/AdminGuard";
@@ -64,6 +65,7 @@ const App = () => (
           <Route path="/admin/pedidos" element={<AdminPage><FlexibleOrders /></AdminPage>} />
           <Route path="/admin/puntos" element={<AdminPage><AdminPoints /></AdminPage>} />
           <Route path="/admin/ranking" element={<AdminPage><AdminRanking /></AdminPage>} />
+          <Route path="/admin/estadisticas" element={<AdminPage><AdminStats /></AdminPage>} />
           <Route path="/admin/configuracion" element={<AdminPage><AdminSettings /></AdminPage>} />
 
           {/* Client routes */}

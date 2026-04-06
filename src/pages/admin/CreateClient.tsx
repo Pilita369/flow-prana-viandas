@@ -53,6 +53,7 @@ export default function CreateClient() {
     fechaFin: '',
     tipoEntrega: 'retiro' as DeliveryType,
     direccionEnvio: '',
+    costoEnvio: 0,
     diasFijos: ['lunes', 'martes', 'miercoles', 'jueves', 'viernes'] as DayOfWeek[],
     cantidadSemanal: 3,
     horaLimite: '20:00',
@@ -151,6 +152,7 @@ export default function CreateClient() {
         fechaFin: planForm.fechaFin,
         tipoEntrega: planForm.tipoEntrega,
         direccionEnvio: planForm.tipoEntrega === 'envio' ? planForm.direccionEnvio : undefined,
+        costoEnvio: planForm.tipoEntrega === 'envio' ? Number(planForm.costoEnvio) : undefined,
         diasFijos: planForm.modalidad === 'fijo' ? planForm.diasFijos : undefined,
         cantidadSemanal: planForm.modalidad === 'flexible' ? Number(planForm.cantidadSemanal) : undefined,
         horaLimite: planForm.modalidad === 'flexible' ? planForm.horaLimite : undefined,
@@ -271,7 +273,10 @@ export default function CreateClient() {
             <div><Label>Fecha de inicio</Label><Input type="date" value={planForm.fechaInicio} onChange={e => setPlanForm({ ...planForm, fechaInicio: e.target.value })} /></div>
             <div><Label>Fecha estimada de finalización</Label><Input value={planForm.fechaFin ? formatDateAR(planForm.fechaFin) : ''} readOnly /></div>
             {planForm.tipoEntrega === 'envio' && (
-              <div className="md:col-span-2"><Label>Dirección de envío</Label><Input value={planForm.direccionEnvio} onChange={e => setPlanForm({ ...planForm, direccionEnvio: e.target.value })} /></div>
+              <>
+                <div><Label>Dirección de envío</Label><Input value={planForm.direccionEnvio} onChange={e => setPlanForm({ ...planForm, direccionEnvio: e.target.value })} /></div>
+                <div><Label>Costo de envío ($)</Label><Input type="number" min={0} value={planForm.costoEnvio} onChange={e => setPlanForm({ ...planForm, costoEnvio: Number(e.target.value) })} placeholder="Ej: 3500" /></div>
+              </>
             )}
           </div>
 
