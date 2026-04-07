@@ -45,6 +45,9 @@ export default function ClientPlanHistory({ clientId, showAdmin = false }: Props
     setPlans(p);
     setConsumptions(c);
     setLoading(false);
+    // Expandir el período activo por defecto
+    const active = p.find(plan => plan.activo);
+    if (active) setExpandedPlan(active.id);
   };
 
   useEffect(() => { loadData(); }, [clientId]);
@@ -75,11 +78,6 @@ export default function ClientPlanHistory({ clientId, showAdmin = false }: Props
   const totalConsumidas = consumptions
     .filter(c => normalizeStatus(c.status) === 'retirado')
     .reduce((acc, c) => acc + c.cantidad, 0);
-
-  const periodosConConsumo = sortedPlans.filter(p => {
-    const cons = consMapByPlan[p.id] || [];
-    return cons.some(c => normalizeStatus(c.status) === 'retirado');
-  }).length;
 
   const fechaInicioPrimero = sortedPlans[sortedPlans.length - 1]?.fechaInicio;
   const fechaFinUltimo = sortedPlans[0]?.fechaFin;
@@ -189,15 +187,22 @@ export default function ClientPlanHistory({ clientId, showAdmin = false }: Props
                 <p className="text-xs text-muted-foreground">Disponibles</p>
                 <p className={`font-semibold ${disponibles > 0 ? 'text-blue-600' : ''}`}>{disponibles}</p>
               </div>
-              {showAdmin ? (
-                <div className="text-center p-2 rounded bg-muted/50">
+              <div className="text-center p-2 rounded bg-red-500/10">
+                <p className="text-xs text-muted-foreground">No retiró</p>
+                <p className="font-semibold text-red-500">{noRetiraron}</p>
+              </div>
+              <div className="text-center p-2 rounded bg-muted/50">
+                <p className="text-xs text-muted-foreground">Precio x vianda</p>
+                <p className="font-semibold">{formatCurrencyAR(p.precioUnitario)}</p>
+              </div>
+              <div className="text-center p-2 rounded bg-muted/50">
+                <p className="text-xs text-muted-foreground">Total período</p>
+                <p className="font-semibold">{formatCurrencyAR(p.totalCalculado)}</p>
+              </div>
+              {showAdmin && (
+                <div className="text-center p-2 rounded bg-muted/50 md:col-span-2">
                   <p className="text-xs text-muted-foreground">Neto consumido</p>
                   <p className="font-semibold">{formatCurrencyAR(consumidas * p.precioUnitario)}</p>
-                </div>
-              ) : (
-                <div className="text-center p-2 rounded bg-red-500/10">
-                  <p className="text-xs text-muted-foreground">No retiró</p>
-                  <p className="font-semibold text-red-500">{noRetiraron}</p>
                 </div>
               )}
             </div>
