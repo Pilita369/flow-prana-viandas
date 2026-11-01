@@ -1,0 +1,116 @@
+/* eslint-disable react-refresh/only-export-components */
+// Piezas comunes de la planilla general y del calendario de la ficha del cliente,
+// para que ambas vistas muestren y calculen cada día exactamente igual.
+import { AlertCircle, Check, Loader2 } from 'lucide-react';
+import { getDayNameFromDate } from '@/lib/business';
+import { dayTotal, formatTimeAR } from '@/lib/consumo';
+import type { CellState } from '@/hooks/useConsumptionSaver';
+import type { Consumption, Plan } from '@/types';
+
+export interface DayInfo {
+  savedTotal: number | null;
+  /** Lo que se muestra: el valor guardándose / con error, o el guardado. */
+  shown: number | null;
+  future: boolean;
+  feriado: boolean;
+  excluida: boolean;
+  habitualDay: boolean;
+  hasNotes: boolean;
+  notes: string;
+  multiple: boolean;
+}
+
+export function describeDay(params: {
+  fecha: string;
+  rows: Consumption[];
+  plan?: Plan;
+  feriados: Set<string>;
+  today: string;
+  pending?: CellState;
+}): DayInfo {
+  const { fecha, rows, plan, feriados, today, pending } = params;
+  const savedTotal = dayTotal(rows);
+  const shown = pending && pending.status !== 'saved' ? pending.cantidad : savedTotal;
+  const feriado = feriados.has(fecha);
+  const excluida = !!plan?.fechasExcluidas?.includes(fecha);
+  const dayName = getDayNameFromDate(fecha);
+  const habitualDay = plan?.modalidad === 'fijo' && !!dayName && !!plan.diasFijos?.includes(dayName) && !feriado && !excluida
+    && plan.fechaInicio <= fecha && fecha <= plan.fechaFin;
+  const notes = rows.map(x => x.notas?.trim()).filter(Boolean).join(' | ');
+  return {
+    savedTotal, shown, future: fecha > today, feriado, excluida, habitualDay,
+    hasNotes: !!notes, notes, multiple: rows.length > 1,
+  };
+}
+
+/** Colores de la casilla: sin registro (–), 0 sin consumo, N viandas. */
+export function dayToneClass(d: DayInfo): string {
+  let cls = 'text-muted-foreground/40';
+  if (d.shown === 0) cls = 'bg-muted text-muted-foreground';
+  else if (d.shown !== null && d.shown > 0) cls = 'bg-primary/15 text-primary font-semibold';
+  if ((d.excluida || d.feriado) && d.shown === null) cls += ' bg-amber-50';
+  if (d.habitualDay && d.shown === null && !d.future) cls += ' border border-dashed border-muted-foreground/30';
+  return cls;
+}
+
+export function dayStatusClass(st?: CellState): string {
+  if (st?.status === 'saving') return 'animate-pulse';
+  if (st?.status === 'saved') return 'ring-2 ring-[hsl(var(--success))]';
+  if (st?.status === 'error') return 'ring-2 ring-destructive';
+  return '';
+}
+
+/** Marcas de la casilla: feriado/excluida, notas o varios registros, error. */
+export function DayMarks({ d, st }: { d: DayInfo; st?: CellState }) {
+  return (
+    <>
+      {(d.excluida || d.feriado) && <span className="absolute top-0.5 left-0.5 w-1.5 h-1.5 rounded-full bg-amber-500" />}
+      {(d.hasNotes || d.multiple) && <span className="absolute top-0 right-0 w-0 h-0 border-t-[7px] border-l-[7px] border-t-secondary border-l-transparent rounded-tr-md" />}
+      {st?.status === 'error' && <AlertCircle className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 text-destructive bg-card rounded-full" />}
+    </>
+  );
+}
+
+export function dayTitle(d: DayInfo, rowsCount: number): string | undefined {
+  return [
+    d.feriado && 'Feriado', d.excluida && 'Fecha excluida', rowsCount > 1 && `${rowsCount} registros`, d.hasNotes && d.notes,
+  ].filter(Boolean).join(' · ') || undefined;
+}
+
+export function SaveIndicator({ saving, errors, lastSavedAt, onRetryAll }: { saving: number; errors: number; lastSavedAt: Date | null; onRetryAll: () => void }) {
+  if (errors > 0) {
+    return (
+      <button onClick={onRetryAll} className="inline-flex items-center gap-1.5 text-sm text-destructive rounded-full border border-destructive/40 bg-destructive/5 px-3 py-1.5">
+        <AlertCircle className="w-4 h-4" />{errors} sin guardar · Reintentar
+      </button>
+    );
+  }
+  if (saving > 0) {
+    return <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Guardando…</span>;
+  }
+  if (lastSavedAt) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+        <Check className="w-4 h-4 text-[hsl(var(--success))]" />Guardado {formatTimeAR(lastSavedAt)}
+      </span>
+    );
+  }
+  return null;
+}
+
+export function ConsumptionLegend({ keyboardHint = true }: { keyboardHint?: boolean }) {
+  const item = (box: React.ReactNode, label: string) => (
+    <span className="inline-flex items-center gap-1.5">{box}<span>{label}</span></span>
+  );
+  const box = 'inline-flex h-5 w-5 items-center justify-center rounded text-[11px] tabular-nums';
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground mb-3">
+      {item(<span className={`${box} text-muted-foreground/50 border border-border`}>–</span>, 'Sin registro')}
+      {item(<span className={`${box} bg-muted`}>0</span>, 'Sin consumo')}
+      {item(<span className={`${box} bg-primary/15 text-primary font-semibold`}>2</span>, 'Viandas consumidas')}
+      {item(<span className={`${box} border border-dashed border-muted-foreground/40`} />, 'Día habitual sin registro')}
+      {item(<span className={`${box} bg-amber-50 relative`}><span className="absolute top-0.5 left-0.5 w-1.5 h-1.5 rounded-full bg-amber-500" /></span>, 'Feriado o fecha excluida')}
+      {keyboardHint && <span className="hidden md:inline">Con el teclado: número para guardar, Supr para quitar, flechas para moverte.</span>}
+    </div>
+  );
+}

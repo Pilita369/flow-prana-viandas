@@ -7,13 +7,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  getClient, getActivePlan, getClientConsumptions, getClientPoints, getClientPlans,
-  getDisponibles, getCantidadUsada, updatePlan,
+  getClient, getActivePlan, loadClientConsumptionsOrThrow, getClientPoints, getClientPlans,
+  updatePlan,
   renovarPlan, getCreditNotes,
 } from '@/lib/store';
 import { addDaysISO, addMonthsISO, computePlanBalance, formatTimestampDateAR, splitCarryOver, todayISO, todayLabelAR } from '@/lib/consumo';
 import { Link } from 'react-router-dom';
 import ClientMonthlyHistory from '@/components/ClientMonthlyHistory';
+import ClientConsumptionCalendar from '@/components/ClientConsumptionCalendar';
+import { useRefreshOnReturn } from '@/hooks/useConsumptionSaver';
 import { formatCurrencyAR, formatDateAR, getDiasEstimadosFromPlan, calculateFixedPlanEstimatedEndDate, calcularTotalContrato } from '@/lib/business';
 import { toast } from 'sonner';
 import type { Client, Plan, Consumption, PointTransaction, DayOfWeek, CreditNote } from '@/types';
@@ -46,8 +48,6 @@ export default function ClientDetail() {
   const [clientPlans, setClientPlans] = useState<Plan[]>([]);
   const [historyKey, setHistoryKey] = useState(0);
   const [points, setPoints] = useState<PointTransaction[]>([]);
-  const [usadas, setUsadas] = useState(0);
-  const [disponibles, setDisponibles] = useState(0);
   const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
   const [newExcludedDate, setNewExcludedDate] = useState('');
   const [loading, setLoading] = useState(true);
@@ -95,10 +95,8 @@ export default function ClientDetail() {
       const c = await getClient(id);
       if (!c) { navigate('/admin/clientes'); return; }
       const activePlan = (await getActivePlan(id)) || null;
-      const clientConsumptions = await getClientConsumptions(id);
+      const clientConsumptions = await loadClientConsumptionsOrThrow(id);
       const clientPoints = await getClientPoints(id);
-      const cantUsadas = await getCantidadUsada(activePlan);
-      const cantDisponibles = await getDisponibles(activePlan);
       const allPlans = await getClientPlans(id);
 
       setClient(c);
@@ -107,8 +105,6 @@ export default function ClientDetail() {
       setClientPlans(allPlans);
       setHistoryKey(k => k + 1);
       setPoints(clientPoints);
-      setUsadas(cantUsadas);
-      setDisponibles(cantDisponibles);
       setCreditNotes(await getCreditNotes(id).catch(() => []));
 
       if (activePlan) {
@@ -138,8 +134,26 @@ export default function ClientDetail() {
 
   useEffect(() => { load(); }, [id]);
 
+  /** Después de guardar un consumo: actualiza saldo y puntos sin recargar toda la ficha. */
+  const refreshAfterConsumption = async (next: Consumption[]) => {
+    if (!id) return;
+    setConsumptions(next);
+    const [c, clientPoints] = await Promise.all([getClient(id), getClientPoints(id)]);
+    if (c) setClient(c);
+    setPoints(clientPoints);
+  };
+
+  /** Al volver a la pestaña, relee los consumos (pueden haberse cargado desde la planilla general u otro dispositivo). */
+  useRefreshOnReturn(() => {
+    if (!id) return;
+    loadClientConsumptionsOrThrow(id).then(setConsumptions).catch(() => { /* se mantiene lo que había */ });
+  }, !!id && !loading);
+
   // Saldo a favor del contrato activo que todavía no se aplicó a otro contrato
   const balanceActivo = plan ? computePlanBalance(plan, consumptions, clientPlans, todayISO()) : null;
+  // Mismo cálculo que antes (getCantidadUsada / getDisponibles), pero sobre los consumos en pantalla
+  const usadas = balanceActivo ? balanceActivo.ajusteInicial + balanceActivo.consumidas : 0;
+  const disponibles = balanceActivo ? Math.max(balanceActivo.disponible, 0) : 0;
   const saldoAFavorActivo = balanceActivo?.aFavorSinAplicar ?? 0;
 
   const openRenovar = () => {
@@ -642,16 +656,17 @@ export default function ClientDetail() {
         </div>
       )}
 
-      {/* Consumos por mes (consulta) */}
+      {/* Consumos: carga mensual editable + historial por mes */}
       <div className="mb-6 space-y-3">
-        <div className="glass-card p-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="font-semibold">Consumos por mes</h3>
-            <p className="text-xs text-muted-foreground">Para consultar. La carga diaria y las correcciones se hacen desde la planilla de consumos.</p>
-          </div>
-          <Button asChild variant="outline" size="sm">
-            <Link to="/admin/consumos"><CalendarCheck className="w-4 h-4 mr-2" />Abrir planilla de consumos</Link>
-          </Button>
+        <ClientConsumptionCalendar
+          client={client}
+          plans={clientPlans}
+          consumptions={consumptions}
+          onConsumptionsChange={next => { void refreshAfterConsumption(next); }}
+        />
+        <div className="flex items-center gap-2 pt-2">
+          <CalendarCheck className="w-4 h-4 text-muted-foreground" />
+          <h3 className="font-semibold">Historial por mes</h3>
         </div>
         <ClientMonthlyHistory key={historyKey} consumptions={consumptions} plans={clientPlans} />
       </div>

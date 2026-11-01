@@ -1,31 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { ChevronLeft, ChevronRight, Check, Loader2, AlertCircle, Search, RotateCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, RotateCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent } from '@/components/ui/popover';
 import ConsumptionCellEditor from '@/components/ConsumptionCellEditor';
 import CarryOverDialog from '@/components/CarryOverDialog';
-import { loadClients, loadPlans, loadConsumptionsOrThrow, setDailyConsumption } from '@/lib/store';
-import { formatDateAR, getBusinessConfig, getDayNameFromDate } from '@/lib/business';
+import { loadClients, loadPlans, loadConsumptionsOrThrow } from '@/lib/store';
+import { formatDateAR, getBusinessConfig } from '@/lib/business';
 import {
   computePlanBalance, dayTotal, getNextPlan, monthDays, parseISODate, planForMonth,
-  resolvePlanForDate, todayISO, isConsumed, capFirst, formatTimeAR, type PlanBalance,
+  resolvePlanForDate, todayISO, isConsumed, capFirst, type PlanBalance,
 } from '@/lib/consumo';
+import { cellKey as keyOf, useConsumptionSaver, useRefreshOnReturn } from '@/hooks/useConsumptionSaver';
+import { ConsumptionLegend, DayMarks, SaveIndicator, dayStatusClass, dayTitle, dayToneClass, describeDay } from '@/components/ConsumptionShared';
 import { toast } from 'sonner';
 import type { Client, Consumption, Plan } from '@/types';
 
 const DAY_ABBR = ['do', 'lu', 'ma', 'mi', 'ju', 'vi', 'sá'];
 
-interface CellState {
-  status: 'saving' | 'saved' | 'error';
-  cantidad: number | null;
-  notas?: string | null;
-  error?: string;
-}
-
-const keyOf = (clientId: string, fecha: string) => `${clientId}|${fecha}`;
 const fullName = (c: Client) => `${c.nombre} ${c.apellido}`.trim();
 
 function shiftMonth(mes: string, delta: number): string {
@@ -51,15 +45,11 @@ export default function DailyConsumptions() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [cells, setCells] = useState<Record<string, CellState>>({});
-  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [editing, setEditing] = useState<{ clientId: string; fecha: string } | null>(null);
   const [carry, setCarry] = useState<{ client: Client; from: Plan; to: Plan; sobrante: number; conciliacion: boolean } | null>(null);
 
   const anchorRef = useRef<HTMLElement | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const queues = useRef(new Map<string, Promise<void>>());
-  const versions = useRef(new Map<string, number>());
 
   const setConsumptions = (next: Consumption[]) => { consRef.current = next; setConsumptionsState(next); };
 
@@ -79,6 +69,16 @@ export default function DailyConsumptions() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  /** Relectura silenciosa (sin pantalla de carga), al volver a la pestaña. */
+  const refresh = useCallback(async () => {
+    try {
+      const [cl, pl, co] = await Promise.all([loadClients(), loadPlans(), loadConsumptionsOrThrow()]);
+      setClients(cl);
+      setPlans(pl);
+      setConsumptions(co);
+    } catch { /* se mantiene lo que ya estaba en pantalla */ }
+  }, []);
 
   // ---------- índices ----------
   const plansByClient = useMemo(() => {
@@ -141,71 +141,38 @@ export default function DailyConsumptions() {
   }, [clients, plansByClient, consByClient, year, month0, mes, today]);
 
   // ---------- guardado ----------
-  const save = useCallback((client: Client, fecha: string, cantidad: number | null, notas?: string | null) => {
-    const key = keyOf(client.id, fecha);
-    const existing = consRef.current.filter(c => c.clientId === client.id && c.fecha === fecha);
-    const cp = plansByClient.get(client.id) || [];
-    const planId = existing[0]?.planId || resolvePlanForDate(cp, fecha)?.id;
-    if (!planId) { toast.error(`${fullName(client)} no tiene contrato cargado`); return; }
-
-    const version = (versions.current.get(key) || 0) + 1;
-    versions.current.set(key, version);
-    setCells(s => ({ ...s, [key]: { status: 'saving', cantidad, notas } }));
-
-    const prev = queues.current.get(key) || Promise.resolve();
-    const run = prev.then(async () => {
-      try {
-        const rows = await setDailyConsumption({ clientId: client.id, planId, fecha, cantidad, notas });
-        const next = [...consRef.current.filter(c => !(c.clientId === client.id && c.fecha === fecha)), ...rows];
-        setConsumptions(next);
-        if (versions.current.get(key) !== version) return;
-        setCells(s => ({ ...s, [key]: { status: 'saved', cantidad } }));
-        setLastSavedAt(new Date());
-        setTimeout(() => {
-          if (versions.current.get(key) !== version) return;
-          setCells(s => { const { [key]: _, ...rest } = s; return rest; });
-        }, 1400);
-
-        const plan = plans.find(p => p.id === (rows[0]?.planId || planId));
-        if (plan && cantidad !== null && cantidad > 0) {
-          const b = computePlanBalance(plan, next.filter(c => c.clientId === client.id), cp, today);
-          if (b.disponible < 0) {
-            toast.warning(`${fullName(client)}: supera el saldo del contrato por ${-b.disponible} vianda(s). No se modificaron pagos ni contratos.`);
-          }
-        }
-      } catch (e) {
-        if (versions.current.get(key) !== version) return;
-        const msg = (e as Error).message || 'Error desconocido';
-        setCells(s => ({ ...s, [key]: { status: 'error', cantidad, notas, error: msg } }));
-        toast.error(`No se guardó ${fullName(client)} (${formatDateAR(fecha)}). Tocá la casilla para reintentar.`);
-      }
-    });
-    queues.current.set(key, run);
-  }, [plansByClient, plans, today]);
-
-  const retry = (client: Client, fecha: string) => {
-    const st = cells[keyOf(client.id, fecha)];
-    if (st) save(client, fecha, st.cantidad, st.notas);
-  };
-
-  const errorKeys = Object.entries(cells).filter(([, v]) => v.status === 'error').map(([k]) => k);
-  const savingCount = Object.values(cells).filter(v => v.status === 'saving').length;
-
-  const retryAll = () => {
-    for (const k of errorKeys) {
-      const [clientId, fecha] = k.split('|');
+  const saver = useConsumptionSaver({
+    onSaved: ({ clientId, fecha, cantidad, rows, latest, planId }) => {
+      const next = [...consRef.current.filter(c => !(c.clientId === clientId && c.fecha === fecha)), ...rows];
+      setConsumptions(next);
+      if (!latest || cantidad === null || cantidad <= 0) return;
       const client = clients.find(c => c.id === clientId);
-      if (client) retry(client, fecha);
-    }
-  };
+      const cp = plansByClient.get(clientId) || [];
+      const plan = plans.find(p => p.id === (rows[0]?.planId || planId));
+      if (client && plan) {
+        const b = computePlanBalance(plan, next.filter(c => c.clientId === clientId), cp, today);
+        if (b.disponible < 0) {
+          toast.warning(`${fullName(client)}: supera el saldo del contrato por ${-b.disponible} vianda(s). No se modificaron pagos ni contratos.`);
+        }
+      }
+    },
+    onFailed: ({ clientId, fecha }) => {
+      const client = clients.find(c => c.id === clientId);
+      toast.error(`No se guardó ${client ? fullName(client) : 'el consumo'} (${formatDateAR(fecha)}). Tocá la casilla para reintentar.`);
+    },
+  });
+  const { cells } = saver;
 
-  useEffect(() => {
-    const handler = (e: BeforeUnloadEvent) => {
-      if (savingCount > 0 || errorKeys.length > 0) { e.preventDefault(); e.returnValue = ''; }
-    };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [savingCount, errorKeys.length]);
+  const save = useCallback((client: Client, fecha: string, cantidad: number | null, notas?: string | null) => {
+    const existing = consRef.current.filter(c => c.clientId === client.id && c.fecha === fecha);
+    const planId = existing[0]?.planId || resolvePlanForDate(plansByClient.get(client.id) || [], fecha)?.id;
+    if (!planId) { toast.error(`${fullName(client)} no tiene contrato cargado`); return; }
+    saver.save({ clientId: client.id, planId, fecha, cantidad, notas });
+  }, [plansByClient, saver]);
+
+  const retry = (client: Client, fecha: string) => saver.retry(client.id, fecha);
+
+  useRefreshOnReturn(() => { void refresh(); }, !loading && !saver.busy);
 
   // ---------- scroll al día de hoy ----------
   useEffect(() => {
@@ -252,7 +219,7 @@ export default function DailyConsumptions() {
           <h1 className="page-title">Consumos</h1>
           <p className="page-subtitle">Tocá una casilla para registrar cuántas viandas consumió cada cliente ese día.</p>
         </div>
-        <SaveIndicator saving={savingCount} errors={errorKeys.length} lastSavedAt={lastSavedAt} onRetryAll={retryAll} />
+        <SaveIndicator saving={saver.savingCount} errors={saver.errorCount} lastSavedAt={saver.lastSavedAt} onRetryAll={saver.retryAll} />
       </div>
 
       <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -278,7 +245,7 @@ export default function DailyConsumptions() {
         </div>
       </div>
 
-      <Legend />
+      <ConsumptionLegend />
 
       {loading ? (
         <div className="text-center py-12 text-muted-foreground">Cargando...</div>
@@ -339,25 +306,12 @@ export default function DailyConsumptions() {
                       </th>
                       {days.map((d, c) => {
                         const rows = rowsFor(client.id, d);
-                        const savedTotal = dayTotal(rows);
                         const st = cells[keyOf(client.id, d)];
-                        const shown = st && st.status !== 'saved' ? st.cantidad : savedTotal;
-                        const future = d > today;
                         const plan = dayPlans.get(client.id)?.get(d);
+                        const info = describeDay({ fecha: d, rows, plan, feriados, today, pending: st });
+                        const { savedTotal, shown, future } = info;
                         const disabled = future || cp.length === 0;
-                        const excluida = !!plan?.fechasExcluidas?.includes(d);
-                        const feriado = feriados.has(d);
-                        const dayName = getDayNameFromDate(d);
-                        const habitualDay = plan?.modalidad === 'fijo' && !!dayName && !!plan.diasFijos?.includes(dayName) && !feriado && !excluida
-                          && plan.fechaInicio <= d && d <= plan.fechaFin;
-                        const hasNotes = rows.some(x => x.notas?.trim());
                         const isToday = d === today;
-
-                        let cls = 'text-muted-foreground/40';
-                        if (shown === 0) cls = 'bg-muted text-muted-foreground';
-                        else if (shown !== null && shown > 0) cls = 'bg-primary/15 text-primary font-semibold';
-                        if ((excluida || feriado) && shown === null) cls += ' bg-amber-50';
-                        if (habitualDay && shown === null && !future) cls += ' border border-dashed border-muted-foreground/30';
 
                         return (
                           <td key={d} className={`border-b border-border p-0.5 text-center ${isToday ? 'bg-primary/5' : ''}`}>
@@ -366,24 +320,17 @@ export default function DailyConsumptions() {
                               data-cell={`${r}:${c}`}
                               disabled={disabled}
                               onClick={e => { anchorRef.current = e.currentTarget; setEditing({ clientId: client.id, fecha: d }); }}
-                              onKeyDown={e => onCellKeyDown(e, client, d, r, c, savedTotal, hasNotes)}
+                              onKeyDown={e => onCellKeyDown(e, client, d, r, c, savedTotal, info.hasNotes)}
                               aria-label={`${fullName(client)} ${formatDateAR(d)}: ${shown === null ? 'sin registro' : shown}`}
-                              title={[
-                                feriado && 'Feriado', excluida && 'Fecha excluida', rows.length > 1 && `${rows.length} registros`,
-                                hasNotes && rows.map(x => x.notas).filter(Boolean).join(' | '),
-                              ].filter(Boolean).join(' · ') || undefined}
+                              title={dayTitle(info, rows.length)}
                               className={`relative h-11 w-11 rounded-md text-sm tabular-nums transition-colors outline-none
                                 focus-visible:ring-2 focus-visible:ring-ring
                                 ${disabled ? 'cursor-default opacity-40' : 'hover:ring-1 hover:ring-primary/40'}
-                                ${cls}
-                                ${st?.status === 'saving' ? 'animate-pulse' : ''}
-                                ${st?.status === 'saved' ? 'ring-2 ring-[hsl(var(--success))]' : ''}
-                                ${st?.status === 'error' ? 'ring-2 ring-destructive' : ''}`}
+                                ${dayToneClass(info)}
+                                ${dayStatusClass(st)}`}
                             >
                               {future ? '' : shown === null ? '–' : shown}
-                              {(excluida || feriado) && <span className="absolute top-0.5 left-0.5 w-1.5 h-1.5 rounded-full bg-amber-500" />}
-                              {(hasNotes || rows.length > 1) && <span className="absolute top-0 right-0 w-0 h-0 border-t-[7px] border-l-[7px] border-t-secondary border-l-transparent rounded-tr-md" />}
-                              {st?.status === 'error' && <AlertCircle className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 text-destructive bg-card rounded-full" />}
+                              <DayMarks d={info} st={st} />
                             </button>
                           </td>
                         );
@@ -459,44 +406,6 @@ export default function DailyConsumptions() {
 }
 
 // ------------------------------------------------------
-
-function SaveIndicator({ saving, errors, lastSavedAt, onRetryAll }: { saving: number; errors: number; lastSavedAt: Date | null; onRetryAll: () => void }) {
-  if (errors > 0) {
-    return (
-      <button onClick={onRetryAll} className="inline-flex items-center gap-1.5 text-sm text-destructive rounded-full border border-destructive/40 bg-destructive/5 px-3 py-1.5">
-        <AlertCircle className="w-4 h-4" />{errors} sin guardar · Reintentar
-      </button>
-    );
-  }
-  if (saving > 0) {
-    return <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Guardando…</span>;
-  }
-  if (lastSavedAt) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
-        <Check className="w-4 h-4 text-[hsl(var(--success))]" />Guardado {formatTimeAR(lastSavedAt)}
-      </span>
-    );
-  }
-  return null;
-}
-
-function Legend() {
-  const item = (box: React.ReactNode, label: string) => (
-    <span className="inline-flex items-center gap-1.5">{box}<span>{label}</span></span>
-  );
-  const box = 'inline-flex h-5 w-5 items-center justify-center rounded text-[11px] tabular-nums';
-  return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground mb-3">
-      {item(<span className={`${box} text-muted-foreground/50 border border-border`}>–</span>, 'Sin registro')}
-      {item(<span className={`${box} bg-muted`}>0</span>, 'Sin consumo')}
-      {item(<span className={`${box} bg-primary/15 text-primary font-semibold`}>2</span>, 'Viandas consumidas')}
-      {item(<span className={`${box} border border-dashed border-muted-foreground/40`} />, 'Día habitual sin registro')}
-      {item(<span className={`${box} bg-amber-50 relative`}><span className="absolute top-0.5 left-0.5 w-1.5 h-1.5 rounded-full bg-amber-500" /></span>, 'Feriado o fecha excluida')}
-      <span className="hidden md:inline">Con el teclado: número para guardar, Supr para quitar, flechas para moverte.</span>
-    </div>
-  );
-}
 
 function SummaryCard({ client, summary, onApply }: {
   client: Client;

@@ -87,6 +87,15 @@ suite('integración con Supabase (cliente de prueba)', () => {
     expect(await puntos()).toBe(7);
   }, 30000);
 
+  it('la ficha y la planilla leen los mismos registros', async () => {
+    const ficha = await store.loadClientConsumptionsOrThrow(clientId);
+    const planilla = (await store.loadConsumptionsOrThrow()).filter(c => c.clientId === clientId);
+    const norm = (l: { id: string; fecha: string; cantidad: number; status: string }[]) =>
+      l.map(c => `${c.id}|${c.fecha}|${c.cantidad}|${c.status}`).sort();
+    expect(norm(ficha)).toEqual(norm(planilla));
+    expect(new Set(ficha.map(c => c.fecha)).size).toBe(ficha.length); // un registro por día
+  }, 30000);
+
   it('saldo a favor: compró 21, consumió 19, aplica 2 y compra 18; corrección posterior se concilia', async () => {
     // Completar 19 consumidas en octubre: hoy hay 7 (2 + 5)
     for (const fecha of ['2026-10-07', '2026-10-08', '2026-10-09', '2026-10-12', '2026-10-13', '2026-10-14']) await guardar(octubre, fecha, 2);

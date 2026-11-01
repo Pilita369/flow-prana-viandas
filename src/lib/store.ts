@@ -605,6 +605,24 @@ export async function loadConsumptionsOrThrow(): Promise<Consumption[]> {
   return _consumptionsCache;
 }
 
+/** Consumos de un cliente leídos directo de la base (sin caché), del más reciente al más antiguo. */
+export async function loadClientConsumptionsOrThrow(clientId: string): Promise<Consumption[]> {
+  let all: Consumption[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from('consumptions')
+      .select('*')
+      .eq('client_id', clientId)
+      .order('fecha', { ascending: false })
+      .order('id', { ascending: true })
+      .range(from, from + 999);
+    if (error) throw new Error(`No se pudieron cargar los consumos: ${error.message}`);
+    all = all.concat((data || []).map((r) => rowToConsumption(r as Record<string, unknown>)));
+    if (!data || data.length < 1000) break;
+  }
+  return all;
+}
+
 /**
  * Fija el total consumido por un cliente en una fecha (reemplaza, no suma).
  * Lee el estado actual desde la base antes de escribir, por lo que repetir el guardado
