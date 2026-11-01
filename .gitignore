@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Respaldos locales con datos reales (no subir)
+backups/

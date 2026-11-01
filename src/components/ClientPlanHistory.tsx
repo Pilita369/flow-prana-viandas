@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getClientPlans, getClientConsumptions, deleteConsumption } from '@/lib/store';
 import { formatCurrencyAR, formatDateAR, calculateFixedPlanEstimatedEndDate } from '@/lib/business';
+import { computePlanBalance, todayISO } from '@/lib/consumo';
 import { Badge } from '@/components/ui/badge';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -20,7 +21,7 @@ function monthLabel(dateStr: string): string {
 // Calcula fecha estimada real desde hoy según viandas restantes y días pactados
 function calcFechaRealEstimada(plan: Plan, disponibles: number): string {
   if (plan.modalidad !== 'fijo' || !plan.diasFijos?.length || disponibles <= 0) return '';
-  const hoy = new Date().toISOString().split('T')[0];
+  const hoy = todayISO();
   const diasRestantes = Math.ceil(disponibles / (plan.unidadesPorRetiro || 1));
   return calculateFixedPlanEstimatedEndDate(hoy, diasRestantes, plan.diasFijos, plan.fechasExcluidas || []);
 }
@@ -125,8 +126,9 @@ export default function ClientPlanHistory({ clientId, showAdmin = false }: Props
         const consumidas = cons
           .filter(c => normalizeStatus(c.status) === 'retirado')
           .reduce((acc, c) => acc + c.cantidad, 0);
-        const disponibles = Math.max(p.cantidadContratada - (p.ajusteInicialUsadas || 0) - consumidas, 0);
-        const noRetiraron = cons.filter(c => normalizeStatus(c.status) === 'no_retirado').length;
+        const balance = computePlanBalance(p, consumptions, plans);
+        const disponibles = Math.max(balance.disponible, 0);
+        const noRetiraron = cons.filter(c => normalizeStatus(c.status) !== 'retirado' || !c.cantidad).length;
         const pct = p.cantidadContratada > 0 ? Math.round((consumidas / p.cantidadContratada) * 100) : 0;
         const isExpanded = expandedPlan === p.id;
 
@@ -187,9 +189,9 @@ export default function ClientPlanHistory({ clientId, showAdmin = false }: Props
                 <p className="text-xs text-muted-foreground">Disponibles</p>
                 <p className={`font-semibold ${disponibles > 0 ? 'text-blue-600' : ''}`}>{disponibles}</p>
               </div>
-              <div className="text-center p-2 rounded bg-red-500/10">
-                <p className="text-xs text-muted-foreground">No retiró</p>
-                <p className="font-semibold text-red-500">{noRetiraron}</p>
+              <div className="text-center p-2 rounded bg-muted/50">
+                <p className="text-xs text-muted-foreground">Días sin consumo</p>
+                <p className="font-semibold">{noRetiraron}</p>
               </div>
               <div className="text-center p-2 rounded bg-muted/50">
                 <p className="text-xs text-muted-foreground">Precio x vianda</p>
@@ -206,6 +208,16 @@ export default function ClientPlanHistory({ clientId, showAdmin = false }: Props
                 </div>
               )}
             </div>
+
+            {(balance.saldoAnteriorAplicado > 0 || balance.trasladado > 0 || balance.excedido > 0 || (balance.cerrado && balance.aFavorSinAplicar > 0) || balance.trasladadoDeMas > 0) && (
+              <div className="flex flex-wrap gap-1.5 text-xs">
+                {balance.saldoAnteriorAplicado > 0 && <span className="rounded-full bg-blue-500/10 text-blue-700 px-2 py-0.5">+{balance.saldoAnteriorAplicado} de saldo anterior</span>}
+                {balance.trasladado > 0 && <span className="rounded-full bg-muted px-2 py-0.5">{balance.trasladado} trasladadas al contrato siguiente</span>}
+                {balance.cerrado && balance.aFavorSinAplicar > 0 && <span className="rounded-full bg-amber-500/15 text-amber-800 px-2 py-0.5">{balance.aFavorSinAplicar} a favor sin aplicar</span>}
+                {balance.excedido > 0 && <span className="rounded-full bg-red-500/10 text-red-600 px-2 py-0.5">{balance.excedido} consumidas de más</span>}
+                {balance.trasladadoDeMas > 0 && <span className="rounded-full bg-red-500/10 text-red-600 px-2 py-0.5">{balance.trasladadoDeMas} trasladadas de más (conciliar)</span>}
+              </div>
+            )}
 
             {/* Fin estimada real si difiere del original (viandas a favor) */}
             {p.activo && fechaRealDistinta && (
@@ -226,7 +238,7 @@ export default function ClientPlanHistory({ clientId, showAdmin = false }: Props
                   className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                  {isExpanded ? 'Ocultar' : 'Ver'} fechas de retiro ({retirosOrdenados.length})
+                  {isExpanded ? 'Ocultar' : 'Ver'} fechas de consumo ({retirosOrdenados.length})
                 </button>
 
                 {isExpanded && (

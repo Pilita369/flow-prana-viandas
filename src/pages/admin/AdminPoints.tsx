@@ -1,3 +1,4 @@
+import { formatTimestampDateAR } from '@/lib/consumo';
 import { useEffect, useState } from 'react';
 import { getClients, getRewards, getRedemptions, addPoints, saveRewards } from '@/lib/store';
 import { Button } from '@/components/ui/button';
@@ -337,7 +338,7 @@ export default function AdminPoints() {
                     <div>
                       <p className="font-medium text-sm">{reward?.nombre || 'Premio'}</p>
                       <p className="text-xs text-muted-foreground">
-                        {client ? `${client.nombre} ${client.apellido}` : 'Cliente'} · {new Date(r.fecha).toLocaleDateString('es-AR')}
+                        {client ? `${client.nombre} ${client.apellido}` : 'Cliente'} · {formatTimestampDateAR(r.fecha)}
                       </p>
                     </div>
                     <Badge variant="secondary">{r.puntosUsados} pts</Badge>

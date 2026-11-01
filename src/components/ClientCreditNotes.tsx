@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { getCreditNotes, saveCreditNote, toggleCreditNote, deleteCreditNote } from '@/lib/store';
-import { formatCurrencyAR, formatDateAR } from '@/lib/business';
+import { getCreditNotes, saveCreditNote, setCreditNoteAplicado, deleteCreditNote } from '@/lib/store';
+import { formatTimestampDateAR } from '@/lib/consumo';
+import { formatCurrencyAR } from '@/lib/business';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,10 +24,14 @@ function tipoLabel(tipo: CreditNoteTipo) {
 
 interface Props {
   clientId: string;
+  /** Avisa a la ficha del cliente cuando cambia la lista. */
+  onChange?: (notes: CreditNote[]) => void;
 }
 
-export default function ClientCreditNotes({ clientId }: Props) {
+export default function ClientCreditNotes({ clientId, onChange }: Props) {
   const [notes, setNotes] = useState<CreditNote[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({
     tipo: 'saldo_envio' as CreditNoteTipo,
@@ -35,35 +40,60 @@ export default function ClientCreditNotes({ clientId }: Props) {
     cantidad: '',
   });
 
-  const load = () => setNotes(getCreditNotes(clientId));
+  const load = async () => {
+    try {
+      const list = await getCreditNotes(clientId);
+      setNotes(list);
+      setLoadError(null);
+      onChange?.(list);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'No se pudieron cargar los ajustes');
+    }
+  };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [clientId]);
 
-  const handleSave = () => {
+  const run = async (action: () => Promise<unknown>, okMsg?: string) => {
+    setBusy(true);
+    try {
+      await action();
+      if (okMsg) toast.success(okMsg);
+      await load();
+      return true;
+    } catch (e) {
+      toast.error(`No se guardó el cambio: ${e instanceof Error ? e.message : 'error de conexión'}`);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (busy) return;
     if (!form.descripcion.trim()) { toast.error('Escribí una descripción'); return; }
-    saveCreditNote({
+    const ok = await run(() => saveCreditNote({
       clientId,
       tipo: form.tipo,
       descripcion: form.descripcion.trim(),
       monto: form.monto ? Number(form.monto) : undefined,
       cantidad: form.cantidad ? Number(form.cantidad) : undefined,
-    });
-    setForm({ tipo: 'saldo_envio', descripcion: '', monto: '', cantidad: '' });
-    setAdding(false);
-    toast.success('Ajuste registrado');
-    load();
+    }), 'Ajuste registrado');
+    if (ok) {
+      setForm({ tipo: 'saldo_envio', descripcion: '', monto: '', cantidad: '' });
+      setAdding(false);
+    }
   };
 
-  const handleToggle = (id: string) => {
-    toggleCreditNote(id);
-    load();
+  const handleToggle = (note: CreditNote) => {
+    if (busy) return;
+    run(() => setCreditNoteAplicado(note.id, !note.aplicado));
   };
 
   const handleDelete = (id: string) => {
+    if (busy) return;
     if (!window.confirm('¿Eliminar este ajuste?')) return;
-    deleteCreditNote(id);
-    toast.success('Ajuste eliminado');
-    load();
+    run(() => deleteCreditNote(id), 'Ajuste eliminado');
   };
 
   const pendientes = notes.filter(n => !n.aplicado);
@@ -134,7 +164,7 @@ export default function ClientCreditNotes({ clientId }: Props) {
             />
           </div>
           <div className="flex gap-2">
-            <Button size="sm" onClick={handleSave}>Guardar ajuste</Button>
+            <Button size="sm" onClick={handleSave} disabled={busy}>Guardar ajuste</Button>
             <Button size="sm" variant="outline" onClick={() => setAdding(false)}>Cancelar</Button>
           </div>
         </div>
@@ -155,10 +185,10 @@ export default function ClientCreditNotes({ clientId }: Props) {
                     {n.cantidad && <span className="text-xs font-semibold text-amber-700">{n.cantidad} vianda{n.cantidad !== 1 ? 's' : ''}</span>}
                   </div>
                   <p className="text-sm mt-1">{n.descripcion}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{formatDateAR(n.fecha.split('T')[0])}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{formatTimestampDateAR(n.fecha)}</p>
                 </div>
                 <div className="flex gap-1 shrink-0">
-                  <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => handleToggle(n.id)} title="Marcar como aplicado">
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => handleToggle(n)} title="Marcar como aplicado">
                     <Check className="w-3.5 h-3.5" />
                   </Button>
                   <Button size="sm" variant="outline" className="h-7 px-2 text-xs text-destructive" onClick={() => handleDelete(n.id)}>
@@ -193,10 +223,10 @@ export default function ClientCreditNotes({ clientId }: Props) {
                       <Badge variant="secondary" className="text-xs">Aplicado</Badge>
                     </div>
                     <p className="text-sm mt-1">{n.descripcion}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">{formatDateAR(n.fecha.split('T')[0])}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{formatTimestampDateAR(n.fecha)}</p>
                   </div>
                   <div className="flex gap-1 shrink-0">
-                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => handleToggle(n.id)} title="Desmarcar">
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => handleToggle(n)} title="Desmarcar">
                       <Check className="w-3.5 h-3.5" />
                     </Button>
                     <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive" onClick={() => handleDelete(n.id)}>
@@ -210,7 +240,11 @@ export default function ClientCreditNotes({ clientId }: Props) {
         </details>
       )}
 
-      {notes.length === 0 && !adding && (
+      {loadError && (
+        <p className="text-sm text-destructive">No se pudieron cargar los ajustes: {loadError}</p>
+      )}
+
+      {notes.length === 0 && !adding && !loadError && (
         <p className="text-sm text-muted-foreground">Sin ajustes registrados.</p>
       )}
     </div>

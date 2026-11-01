@@ -14,6 +14,7 @@ import type {
   OrderStatus,
 } from '@/types';
 import { calcularTotalContrato, getDayNameFromDate, isHoliday, isExcludedForClient } from '@/lib/business';
+import { addDaysISO, parseISODate, partsInAR, planDailySave, todayISO, todayLabelAR } from '@/lib/consumo';
 
 // ======================================================
 // HELPERS GENERALES
@@ -135,6 +136,8 @@ function rowToPlan(row: Record<string, unknown>): Plan {
     horaLimite: row.hora_limite as string | undefined,
     fechasExcluidas: (row.fechas_excluidas as string[]) || [],
     observaciones: row.observaciones as string | undefined,
+    saldoAnteriorAplicado: Number(row.saldo_anterior_aplicado || 0),
+    saldoOrigenPlanId: (row.saldo_origen_plan_id as string) || undefined,
   };
 }
 
@@ -400,6 +403,8 @@ export async function createPlan(
     hora_limite: data.horaLimite || null,
     fechas_excluidas: data.fechasExcluidas || [],
     observaciones: data.observaciones || null,
+    saldo_anterior_aplicado: data.saldoAnteriorAplicado || 0,
+    saldo_origen_plan_id: data.saldoOrigenPlanId || null,
   };
 
   const { data: inserted, error } = await supabase
@@ -436,6 +441,8 @@ export async function updatePlan(id: string, data: Partial<Plan>): Promise<Plan 
   if (data.horaLimite !== undefined) payload.hora_limite = data.horaLimite;
   if (data.fechasExcluidas !== undefined) payload.fechas_excluidas = data.fechasExcluidas;
   if (data.observaciones !== undefined) payload.observaciones = data.observaciones;
+  if (data.saldoAnteriorAplicado !== undefined) payload.saldo_anterior_aplicado = data.saldoAnteriorAplicado;
+  if (data.saldoOrigenPlanId !== undefined) payload.saldo_origen_plan_id = data.saldoOrigenPlanId || null;
 
   if (data.cantidadContratada !== undefined || data.precioUnitario !== undefined) {
     const plans = await getPlans();
@@ -492,26 +499,181 @@ export async function getCantidadUsada(plan?: Plan | null): Promise<number> {
 
 export async function getDisponibles(plan?: Plan | null): Promise<number> {
   if (!plan) return 0;
-  return Math.max(plan.cantidadContratada - (await getCantidadUsada(plan)), 0);
+  const trasladado = (await getPlans())
+    .filter((p) => p.saldoOrigenPlanId === plan.id)
+    .reduce((acc, p) => acc + (p.saldoAnteriorAplicado || 0), 0);
+  return Math.max(
+    plan.cantidadContratada + (plan.saldoAnteriorAplicado || 0) - (await getCantidadUsada(plan)) - trasladado,
+    0
+  );
+}
+
+/**
+ * Aplica (o corrige) el saldo a favor de un contrato en el contrato siguiente.
+ * Solo se ejecuta por confirmación explícita y deja constancia en las observaciones del contrato destino.
+ */
+export async function applyCarryOver(params: {
+  fromPlan: Plan;
+  toPlan: Plan;
+  cantidad: number;
+  reducirCompra: boolean;
+  motivo?: string;
+}): Promise<Plan> {
+  const { fromPlan, toPlan, reducirCompra, motivo } = params;
+  const cantidad = Math.max(Math.floor(params.cantidad || 0), 0);
+  const previo = toPlan.saldoOrigenPlanId === fromPlan.id ? toPlan.saldoAnteriorAplicado || 0 : 0;
+
+  if (toPlan.saldoOrigenPlanId && toPlan.saldoOrigenPlanId !== fromPlan.id && (toPlan.saldoAnteriorAplicado || 0) > 0) {
+    throw new Error('El contrato siguiente ya tiene saldo aplicado desde otro contrato');
+  }
+
+  const payload: Record<string, unknown> = {
+    saldo_anterior_aplicado: cantidad,
+    saldo_origen_plan_id: cantidad > 0 ? fromPlan.id : null,
+  };
+
+  let nuevaCompra = toPlan.cantidadContratada;
+  if (reducirCompra) {
+    nuevaCompra = Math.max(toPlan.cantidadContratada - (cantidad - previo), 0);
+    payload.cantidad_contratada = nuevaCompra;
+    payload.total_calculado = calcularTotalContrato(nuevaCompra, toPlan.precioUnitario);
+  }
+
+  const hoy = todayLabelAR();
+  const origen = `${fromPlan.fechaInicio.split('-').reverse().join('/')}–${fromPlan.fechaFin.split('-').reverse().join('/')}`;
+  const linea =
+    `[${hoy}] Saldo anterior aplicado: ${previo} → ${cantidad} vianda(s) del contrato ${origen}` +
+    (reducirCompra && nuevaCompra !== toPlan.cantidadContratada
+      ? `; compra ajustada de ${toPlan.cantidadContratada} a ${nuevaCompra}`
+      : '') +
+    (motivo ? ` (${motivo})` : '') +
+    '.';
+  payload.observaciones = toPlan.observaciones ? `${toPlan.observaciones}\n${linea}` : linea;
+
+  const { data, error } = await supabase
+    .from('plans')
+    .update(payload)
+    .eq('id', toPlan.id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error aplicando saldo:', error.message);
+    throw new Error(`Error aplicando saldo: ${error.message}`);
+  }
+
+  clearCache();
+  return rowToPlan(data as Record<string, unknown>);
 }
 
 // ======================================================
 // CONSUMOS
 // ======================================================
 
-export async function loadConsumptions(): Promise<Consumption[]> {
-  const { data, error } = await supabase
-    .from('consumptions')
-    .select('*')
-    .order('fecha', { ascending: false });
+// Supabase devuelve como máximo 1000 filas por consulta: se pagina para no perder registros.
+const PAGE_SIZE = 1000;
 
-  if (error) {
-    console.error('Error cargando consumos:', error.message);
+async function fetchAllConsumptionRows(): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from('consumptions')
+      .select('*')
+      .order('fecha', { ascending: false })
+      .order('id', { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    rows.push(...((data || []) as Record<string, unknown>[]));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return rows;
+}
+
+export async function loadConsumptions(): Promise<Consumption[]> {
+  try {
+    _consumptionsCache = (await fetchAllConsumptionRows()).map(rowToConsumption);
+  } catch (e) {
+    console.error('Error cargando consumos:', (e as Error).message);
     return [];
   }
-
-  _consumptionsCache = (data || []).map((row) => rowToConsumption(row as Record<string, unknown>));
   return _consumptionsCache;
+}
+
+/** Igual que loadConsumptions pero lanza el error (para pantallas que deben avisar si falla). */
+export async function loadConsumptionsOrThrow(): Promise<Consumption[]> {
+  _consumptionsCache = (await fetchAllConsumptionRows()).map(rowToConsumption);
+  return _consumptionsCache;
+}
+
+/**
+ * Fija el total consumido por un cliente en una fecha (reemplaza, no suma).
+ * Lee el estado actual desde la base antes de escribir, por lo que repetir el guardado
+ * no duplica registros ni puntos. `cantidad = null` quita el registro del día.
+ * Devuelve los registros que quedan para ese día.
+ */
+export async function setDailyConsumption(params: {
+  clientId: string;
+  planId: string;
+  fecha: string;
+  cantidad: number | null;
+  notas?: string | null;
+}): Promise<Consumption[]> {
+  const { clientId, planId, fecha, cantidad, notas } = params;
+
+  const { data: current, error: readError } = await supabase
+    .from('consumptions')
+    .select('*')
+    .eq('client_id', clientId)
+    .eq('fecha', fecha);
+  if (readError) throw new Error(`No se pudo leer el día: ${readError.message}`);
+
+  const rows = (current || []).map((r) => rowToConsumption(r as Record<string, unknown>));
+  const ops = planDailySave(rows, cantidad, notas);
+
+  if (ops.update) {
+    const { error } = await supabase
+      .from('consumptions')
+      .update({ cantidad: ops.update.cantidad, status: ops.update.status, notas: ops.update.notas })
+      .eq('id', ops.update.id);
+    if (error) throw new Error(`No se pudo guardar: ${error.message}`);
+  }
+
+  if (ops.insert) {
+    const { error } = await supabase.from('consumptions').insert({
+      id: generateId(),
+      client_id: clientId,
+      plan_id: planId,
+      fecha,
+      status: ops.insert.status,
+      tipo: 'manual',
+      cantidad: ops.insert.cantidad,
+      notas: ops.insert.notas,
+    });
+    if (error) throw new Error(`No se pudo guardar: ${error.message}`);
+  }
+
+  if (ops.deleteIds.length > 0) {
+    const { error } = await supabase.from('consumptions').delete().in('id', ops.deleteIds);
+    if (error) throw new Error(`No se pudo unificar el día: ${error.message}`);
+  }
+
+  if (ops.delta !== 0) {
+    await addPoints(
+      clientId,
+      ops.delta,
+      ops.delta > 0 ? `Consumo registrado (${fecha})` : `Corrección de consumo (${fecha})`
+    );
+  }
+
+  const { data: after, error: afterError } = await supabase
+    .from('consumptions')
+    .select('*')
+    .eq('client_id', clientId)
+    .eq('fecha', fecha);
+  if (afterError) throw new Error(`Guardado, pero no se pudo confirmar: ${afterError.message}`);
+
+  _consumptionsCache = [];
+  return (after || []).map((r) => rowToConsumption(r as Record<string, unknown>));
 }
 
 export async function getConsumptions(): Promise<Consumption[]> {
@@ -527,7 +689,7 @@ export async function getClientConsumptions(clientId: string): Promise<Consumpti
 }
 
 export async function getTodayConsumptions(): Promise<Consumption[]> {
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayISO();
   const consumptions = await getConsumptions();
   return consumptions.filter((c) => c.fecha === today);
 }
@@ -786,31 +948,113 @@ export async function redeemReward(clientId: string, rewardId: string): Promise<
 // NOTAS DE CRÉDITO / AJUSTES A FAVOR
 // ======================================================
 
-export function getCreditNotes(clientId: string): CreditNote[] {
-  const all = getItem<CreditNote[]>('mp_credit_notes', []);
-  return all.filter(n => n.clientId === clientId).sort((a, b) => b.fecha.localeCompare(a.fecha));
-}
+// Se guardan en Supabase (tabla credit_notes). Antes vivían solo en el navegador
+// (localStorage 'mp_credit_notes'); migrateLocalCreditNotes los copia una sola vez.
 
-export function saveCreditNote(data: Omit<CreditNote, 'id' | 'fecha' | 'aplicado'>): CreditNote {
-  const all = getItem<CreditNote[]>('mp_credit_notes', []);
-  const note: CreditNote = {
-    id: generateId(),
-    fecha: new Date().toISOString(),
-    aplicado: false,
-    ...data,
+const LOCAL_CREDIT_NOTES_KEY = 'mp_credit_notes';
+const LOCAL_CREDIT_NOTES_BACKUP_KEY = 'mp_credit_notes_respaldo';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rowToCreditNote(row: any): CreditNote {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    tipo: row.tipo,
+    descripcion: row.descripcion,
+    monto: row.monto === null || row.monto === undefined ? undefined : Number(row.monto),
+    cantidad: row.cantidad === null || row.cantidad === undefined ? undefined : Number(row.cantidad),
+    fecha: row.fecha,
+    aplicado: !!row.aplicado,
   };
-  setItem('mp_credit_notes', [...all, note]);
-  return note;
 }
 
-export function toggleCreditNote(id: string): void {
-  const all = getItem<CreditNote[]>('mp_credit_notes', []);
-  setItem('mp_credit_notes', all.map(n => n.id === id ? { ...n, aplicado: !n.aplicado } : n));
+let creditNotesMigration: Promise<void> | null = null;
+
+/**
+ * Copia a Supabase los ajustes guardados en este navegador.
+ * - No duplica: cada ajuste lleva su id original en legacy_id (único) y se inserta ignorando los que ya existen.
+ * - No pierde: la copia local se conserva en 'mp_credit_notes_respaldo'.
+ * - Si falla, se reintenta la próxima vez que se abra la pantalla.
+ */
+export function migrateLocalCreditNotes(): Promise<void> {
+  if (!creditNotesMigration) {
+    creditNotesMigration = (async () => {
+      const local = getItem<CreditNote[]>(LOCAL_CREDIT_NOTES_KEY, []);
+      if (!Array.isArray(local) || local.length === 0) return;
+
+      const { data: existingClients, error: clientsError } = await supabase.from('clients').select('id');
+      if (clientsError) throw clientsError;
+      const clientIds = new Set((existingClients || []).map((c: { id: string }) => c.id));
+
+      const rows = local
+        .filter(n => n && n.id && clientIds.has(n.clientId))
+        .map(n => ({
+          legacy_id: String(n.id),
+          client_id: n.clientId,
+          tipo: n.tipo,
+          descripcion: n.descripcion || '',
+          monto: n.monto ?? null,
+          cantidad: n.cantidad ?? null,
+          fecha: n.fecha || new Date().toISOString(),
+          aplicado: !!n.aplicado,
+        }));
+
+      if (rows.length > 0) {
+        const { error } = await supabase
+          .from('credit_notes')
+          .upsert(rows, { onConflict: 'legacy_id', ignoreDuplicates: true });
+        if (error) throw error;
+      }
+
+      // Conservar la copia local como respaldo y dejar de usarla.
+      const previousBackup = getItem<CreditNote[]>(LOCAL_CREDIT_NOTES_BACKUP_KEY, []);
+      const backupIds = new Set(previousBackup.map(n => n.id));
+      setItem(LOCAL_CREDIT_NOTES_BACKUP_KEY, [...previousBackup, ...local.filter(n => !backupIds.has(n.id))]);
+      localStorage.removeItem(LOCAL_CREDIT_NOTES_KEY);
+    })().catch(err => {
+      creditNotesMigration = null;
+      console.error('No se pudieron copiar los ajustes del navegador a la base', err);
+    });
+  }
+  return creditNotesMigration;
 }
 
-export function deleteCreditNote(id: string): void {
-  const all = getItem<CreditNote[]>('mp_credit_notes', []);
-  setItem('mp_credit_notes', all.filter(n => n.id !== id));
+export async function getCreditNotes(clientId: string): Promise<CreditNote[]> {
+  await migrateLocalCreditNotes();
+  const { data, error } = await supabase
+    .from('credit_notes')
+    .select('*')
+    .eq('client_id', clientId)
+    .order('fecha', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(rowToCreditNote);
+}
+
+export async function saveCreditNote(data: Omit<CreditNote, 'id' | 'fecha' | 'aplicado'>): Promise<CreditNote> {
+  const { data: row, error } = await supabase
+    .from('credit_notes')
+    .insert({
+      client_id: data.clientId,
+      tipo: data.tipo,
+      descripcion: data.descripcion,
+      monto: data.monto ?? null,
+      cantidad: data.cantidad ?? null,
+      aplicado: false,
+    })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return rowToCreditNote(row);
+}
+
+export async function setCreditNoteAplicado(id: string, aplicado: boolean): Promise<void> {
+  const { error } = await supabase.from('credit_notes').update({ aplicado }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteCreditNote(id: string): Promise<void> {
+  const { error } = await supabase.from('credit_notes').delete().eq('id', id);
+  if (error) throw error;
 }
 
 // ======================================================
@@ -835,17 +1079,15 @@ export async function canOrderTomorrow(clientId: string): Promise<{ can: boolean
   if (plan.modalidad !== 'flexible') return { can: false, reason: 'Tu plan es fijo' };
   if ((await getDisponibles(plan)) <= 0) return { can: false, reason: 'Ya no te quedan viandas disponibles' };
 
-  const now = new Date();
+  const now = partsInAR();
   const horaLimite = plan.horaLimite || '20:00';
   const [h, m] = horaLimite.split(':').map(Number);
 
-  if (now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m)) {
+  if (now.hour > h || (now.hour === h && now.minute >= m)) {
     return { can: false, reason: `La hora límite de pedido es ${horaLimite}` };
   }
 
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  const tomorrowStr = addDaysISO(now.iso, 1);
 
   const existing = (await getFlexibleOrders()).find(
     (o) => o.clientId === clientId && o.fechaEntrega === tomorrowStr && o.status !== 'cancelado'
@@ -867,12 +1109,12 @@ export function getTodayDayName(): DayOfWeek {
     5: 'viernes',
   };
 
-  const day = new Date().getDay();
+  const day = parseISODate(todayISO()).getDay();
   return map[day] || 'lunes';
 }
 
 export async function getFixedClientsForToday(): Promise<{ client: Client; plan: Plan }[]> {
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayISO();
   const todayDayName = getTodayDayName();
 
   const clients = await getClients();

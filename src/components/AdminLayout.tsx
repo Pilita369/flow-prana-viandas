@@ -8,7 +8,7 @@ import {
 const navItems = [
   { to: '/admin', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/admin/clientes', icon: Users, label: 'Clientes' },
-  { to: '/admin/consumos', icon: CalendarCheck, label: 'Consumos del día' },
+  { to: '/admin/consumos', icon: CalendarCheck, label: 'Consumos' },
   { to: '/admin/pedidos', icon: ShoppingBag, label: 'Pedidos flexibles' },
   { to: '/admin/puntos', icon: Award, label: 'Puntos y canjes' },
   { to: '/admin/ranking', icon: Trophy, label: 'Ranking' },
@@ -71,7 +71,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="flex-1 min-h-screen">
+      <main className="flex-1 min-w-0 min-h-screen">
         <div className="md:hidden flex items-center justify-between p-4 border-b border-border bg-card">
           <button onClick={() => setSidebarOpen(true)}>
             <Menu className="w-6 h-6 text-foreground" />

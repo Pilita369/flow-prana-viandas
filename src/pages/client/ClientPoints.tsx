@@ -1,3 +1,4 @@
+import { formatTimestampDateAR } from '@/lib/consumo';
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getClientByLink, getClientPoints, getRewards, redeemReward } from '@/lib/store';
@@ -163,7 +164,7 @@ export default function ClientPoints() {
               <div key={t.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
                 <div>
                   <p className="text-sm">{t.motivo}</p>
-                  <p className="text-xs text-muted-foreground">{new Date(t.fecha).toLocaleDateString('es-AR')}</p>
+                  <p className="text-xs text-muted-foreground">{formatTimestampDateAR(t.fecha)}</p>
                 </div>
                 <Badge variant={t.puntos > 0 ? 'default' : 'destructive'}>{t.puntos > 0 ? '+' : ''}{t.puntos}</Badge>
               </div>

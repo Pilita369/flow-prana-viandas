@@ -95,6 +95,11 @@ export interface Plan {
   fechasExcluidas?: string[];
 
   observaciones?: string;
+
+  // Viandas a favor de un contrato anterior aplicadas a este (no se compran de nuevo)
+  saldoAnteriorAplicado?: number;
+  // Contrato del que proviene ese saldo (trazabilidad)
+  saldoOrigenPlanId?: string;
 }
 
 // ==============================================

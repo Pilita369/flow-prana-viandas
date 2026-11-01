@@ -1,19 +1,22 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Copy, Send, Trash2, X, Edit2, Check, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Copy, Send, X, Edit2, Check, RefreshCw, CalendarCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  getClient, getActivePlan, getClientConsumptions, getClientPoints,
-  getDisponibles, getCantidadUsada, createConsumption, deleteConsumption, updatePlan,
+  getClient, getActivePlan, getClientConsumptions, getClientPoints, getClientPlans,
+  getDisponibles, getCantidadUsada, updatePlan,
   renovarPlan, getCreditNotes,
 } from '@/lib/store';
+import { addDaysISO, addMonthsISO, computePlanBalance, formatTimestampDateAR, splitCarryOver, todayISO, todayLabelAR } from '@/lib/consumo';
+import { Link } from 'react-router-dom';
+import ClientMonthlyHistory from '@/components/ClientMonthlyHistory';
 import { formatCurrencyAR, formatDateAR, getDiasEstimadosFromPlan, calculateFixedPlanEstimatedEndDate, calcularTotalContrato } from '@/lib/business';
 import { toast } from 'sonner';
-import type { Client, Plan, Consumption, PointTransaction, ConsumptionStatus, DayOfWeek, CreditNote } from '@/types';
+import type { Client, Plan, Consumption, PointTransaction, DayOfWeek, CreditNote } from '@/types';
 import ClientPlanHistory from '@/components/ClientPlanHistory';
 import ClientCreditNotes from '@/components/ClientCreditNotes';
 
@@ -33,12 +36,6 @@ function getRenovacionPuntos(): number {
   } catch { return 30; }
 }
 
-function normalizeStatus(status: ConsumptionStatus): string {
-  if (status === 'retirado' || status === 'consumido') return 'retirado';
-  if (status === 'no_retirado' || status === 'no_retiro') return 'no_retirado';
-  return status;
-}
-
 export default function ClientDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -46,6 +43,8 @@ export default function ClientDetail() {
   const [client, setClient] = useState<Client | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [consumptions, setConsumptions] = useState<Consumption[]>([]);
+  const [clientPlans, setClientPlans] = useState<Plan[]>([]);
+  const [historyKey, setHistoryKey] = useState(0);
   const [points, setPoints] = useState<PointTransaction[]>([]);
   const [usadas, setUsadas] = useState(0);
   const [disponibles, setDisponibles] = useState(0);
@@ -74,7 +73,8 @@ export default function ClientDetail() {
   // Estado de renovación
   const [renovando, setRenovando] = useState(false);
   const [renovForm, setRenovForm] = useState({
-    cantidadContratada: 0,
+    necesita: 0,
+    saldoAplicado: 0,
     precioUnitario: 0,
     costoEnvio: 0,
     fechaInicio: '',
@@ -88,13 +88,6 @@ export default function ClientDetail() {
     observaciones: '',
   });
 
-  const [manualForm, setManualForm] = useState({
-    fecha: new Date().toISOString().split('T')[0],
-    status: 'retirado' as ConsumptionStatus,
-    cantidad: 1,
-    notas: '',
-  });
-
   const load = async () => {
     if (!id) return;
     setLoading(true);
@@ -106,15 +99,17 @@ export default function ClientDetail() {
       const clientPoints = await getClientPoints(id);
       const cantUsadas = await getCantidadUsada(activePlan);
       const cantDisponibles = await getDisponibles(activePlan);
+      const allPlans = await getClientPlans(id);
 
       setClient(c);
       setPlan(activePlan);
       setConsumptions(clientConsumptions);
+      setClientPlans(allPlans);
+      setHistoryKey(k => k + 1);
       setPoints(clientPoints);
       setUsadas(cantUsadas);
       setDisponibles(cantDisponibles);
-      setCreditNotes(getCreditNotes(id));
-      setManualForm(prev => ({ ...prev, cantidad: activePlan?.unidadesPorRetiro || 1 }));
+      setCreditNotes(await getCreditNotes(id).catch(() => []));
 
       if (activePlan) {
         setPlanEdit({
@@ -143,22 +138,24 @@ export default function ClientDetail() {
 
   useEffect(() => { load(); }, [id]);
 
+  // Saldo a favor del contrato activo que todavía no se aplicó a otro contrato
+  const balanceActivo = plan ? computePlanBalance(plan, consumptions, clientPlans, todayISO()) : null;
+  const saldoAFavorActivo = balanceActivo?.aFavorSinAplicar ?? 0;
+
   const openRenovar = () => {
     if (!plan) return;
     // Fecha inicio = día siguiente al fin del plan actual (o hoy si ya pasó)
-    const planEnd = new Date(plan.fechaFin);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const inicioDate = planEnd >= today ? new Date(planEnd.getTime() + 86400000) : today;
-    const finDate = new Date(inicioDate);
-    finDate.setMonth(finDate.getMonth() + 1);
+    const today = todayISO();
+    const inicio = plan.fechaFin >= today ? addDaysISO(plan.fechaFin, 1) : today;
+    const fin = addMonthsISO(inicio, 1);
 
     setRenovForm({
-      cantidadContratada: plan.cantidadContratada,
+      necesita: plan.cantidadContratada,
+      saldoAplicado: saldoAFavorActivo,
       precioUnitario: plan.precioUnitario,
       costoEnvio: plan.costoEnvio || 0,
-      fechaInicio: inicioDate.toISOString().split('T')[0],
-      fechaFin: finDate.toISOString().split('T')[0],
+      fechaInicio: inicio,
+      fechaFin: fin,
       tipoEntrega: plan.tipoEntrega,
       modalidad: plan.modalidad,
       unidadesPorRetiro: plan.unidadesPorRetiro,
@@ -172,13 +169,20 @@ export default function ClientDetail() {
   };
 
   const handleConfirmarRenovacion = async () => {
-    if (!client) return;
+    if (!client || !plan) return;
+    const { aplicar, comprar } = splitCarryOver(Number(renovForm.necesita), Math.min(Number(renovForm.saldoAplicado), saldoAFavorActivo));
+    if (renovForm.necesita <= 0) { toast.error('Indicá cuántas viandas necesita para el período'); return; }
+    const notaSaldo = aplicar > 0
+      ? `[${todayLabelAR()}] Saldo anterior aplicado: ${aplicar} vianda(s) del contrato ${formatDateAR(plan.fechaInicio)}–${formatDateAR(plan.fechaFin)}.`
+      : '';
     try {
       await renovarPlan(
         client.id,
         {
           clientId: client.id,
-          cantidadContratada: Number(renovForm.cantidadContratada),
+          cantidadContratada: comprar,
+          saldoAnteriorAplicado: aplicar,
+          saldoOrigenPlanId: aplicar > 0 ? plan.id : undefined,
           precioUnitario: Number(renovForm.precioUnitario),
           costoEnvio: renovForm.tipoEntrega === 'envio' ? Number(renovForm.costoEnvio) : undefined,
           fechaInicio: renovForm.fechaInicio,
@@ -189,7 +193,7 @@ export default function ClientDetail() {
           diasFijos: renovForm.modalidad === 'fijo' ? renovForm.diasFijos : undefined,
           cantidadSemanal: renovForm.modalidad === 'flexible' ? Number(renovForm.cantidadSemanal) : undefined,
           horaLimite: renovForm.modalidad === 'flexible' ? renovForm.horaLimite : undefined,
-          observaciones: renovForm.observaciones || undefined,
+          observaciones: [renovForm.observaciones, notaSaldo].filter(Boolean).join('\n') || undefined,
           ajusteInicialUsadas: 0,
         },
         getRenovacionPuntos()
@@ -240,28 +244,13 @@ export default function ClientDetail() {
     : plan?.fechaFin || '';
 
   const totalEditado = calcularTotalContrato(planEdit.cantidadContratada, planEdit.precioUnitario);
-  const totalRenov = calcularTotalContrato(renovForm.cantidadContratada, renovForm.precioUnitario);
+  const renovSplit = splitCarryOver(renovForm.necesita, Math.min(renovForm.saldoAplicado, saldoAFavorActivo));
+  const totalRenov = calcularTotalContrato(renovSplit.comprar, renovForm.precioUnitario);
 
   const handleCopyLink = async () => { await navigator.clipboard.writeText(accessUrl); toast.success('Link copiado'); };
   const handleWhatsApp = () => {
     const msg = encodeURIComponent(`Hola ${client.nombre}, te comparto tu acceso de Mundo Prana para ver tu seguimiento: ${accessUrl}`);
     window.open(`https://wa.me/${client.telefono.replace(/\D/g, '')}?text=${msg}`, '_blank');
-  };
-
-  const handleManualConsumption = async () => {
-    if (!plan) { toast.error('El cliente no tiene contrato activo'); return; }
-    if (manualForm.cantidad < 0) { toast.error('La cantidad no puede ser negativa'); return; }
-    try {
-      await createConsumption({ clientId: client.id, planId: plan.id, fecha: manualForm.fecha, status: manualForm.status, tipo: 'manual', cantidad: Number(manualForm.cantidad), notas: manualForm.notas || undefined });
-      toast.success('Movimiento cargado');
-      await load();
-    } catch (e) { console.error(e); toast.error('Error al cargar el movimiento'); }
-  };
-
-  const handleDeleteConsumption = async (consumptionId: string) => {
-    if (!window.confirm('¿Eliminar este movimiento?')) return;
-    try { await deleteConsumption(consumptionId); toast.success('Movimiento eliminado'); await load(); }
-    catch (e) { console.error(e); toast.error('Error al eliminar'); }
   };
 
   const addExcludedDate = async () => {
@@ -420,6 +409,9 @@ export default function ClientDetail() {
                 </div>
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div><span className="text-muted-foreground">Contratadas:</span> <strong>{plan.cantidadContratada}</strong></div>
+                  {(plan.saldoAnteriorAplicado || 0) > 0 && (
+                    <div><span className="text-muted-foreground">Saldo anterior aplicado:</span> <strong>{plan.saldoAnteriorAplicado}</strong></div>
+                  )}
                   <div><span className="text-muted-foreground">Usadas:</span> <strong>{usadas}</strong></div>
                   <div><span className="text-muted-foreground">Disponibles:</span> <strong>{disponibles}</strong></div>
                   <div><span className="text-muted-foreground">Puntos:</span> <strong>{client.puntos}</strong></div>
@@ -515,11 +507,31 @@ export default function ClientDetail() {
             <Button size="sm" variant="ghost" onClick={() => setRenovando(false)}><X className="w-4 h-4" /></Button>
           </div>
 
+          {saldoAFavorActivo > 0 && (
+            <div className="rounded-lg bg-amber-500/10 text-amber-800 text-sm px-3 py-2">
+              <strong>Saldo a favor: {saldoAFavorActivo} vianda(s)</strong> sin consumir en el contrato actual.
+              Si necesita {renovForm.necesita || 0}, puede aplicar {renovSplit.aplicar} y comprar {renovSplit.comprar} nuevas.
+              Ajustá cuánto aplicar según lo que acordaste con el cliente.
+            </div>
+          )}
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div>
-              <Label className="text-xs">Cantidad contratada</Label>
-              <Input type="number" value={renovForm.cantidadContratada} onChange={e => setRenovForm({ ...renovForm, cantidadContratada: Number(e.target.value) })} className="h-8 text-sm" />
+              <Label className="text-xs">{saldoAFavorActivo > 0 ? 'Viandas que necesita' : 'Cantidad contratada'}</Label>
+              <Input type="number" min={0} value={renovForm.necesita} onChange={e => setRenovForm({ ...renovForm, necesita: Number(e.target.value) })} className="h-8 text-sm" />
             </div>
+            {saldoAFavorActivo > 0 && (
+              <>
+                <div>
+                  <Label className="text-xs">Saldo a favor a aplicar (máx. {saldoAFavorActivo})</Label>
+                  <Input type="number" min={0} max={saldoAFavorActivo} value={renovForm.saldoAplicado} onChange={e => setRenovForm({ ...renovForm, saldoAplicado: Math.max(0, Math.min(Number(e.target.value), saldoAFavorActivo)) })} className="h-8 text-sm" />
+                </div>
+                <div>
+                  <Label className="text-xs">Viandas nuevas a comprar</Label>
+                  <Input value={renovSplit.comprar} readOnly className="h-8 text-sm bg-muted" />
+                </div>
+              </>
+            )}
             <div>
               <Label className="text-xs">Precio por vianda</Label>
               <Input type="number" value={renovForm.precioUnitario} onChange={e => setRenovForm({ ...renovForm, precioUnitario: Number(e.target.value) })} className="h-8 text-sm" />
@@ -630,28 +642,23 @@ export default function ClientDetail() {
         </div>
       )}
 
-      {/* Consumo manual */}
-      <div className="glass-card p-5 mb-6 space-y-4">
-        <h3 className="font-semibold">Cargar consumo manual / histórico</h3>
-        <div className="grid md:grid-cols-4 gap-4">
-          <div><Label>Fecha</Label><Input type="date" value={manualForm.fecha} onChange={e => setManualForm({ ...manualForm, fecha: e.target.value })} /></div>
+      {/* Consumos por mes (consulta) */}
+      <div className="mb-6 space-y-3">
+        <div className="glass-card p-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <Label>Estado</Label>
-            <select className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm" value={manualForm.status} onChange={e => setManualForm({ ...manualForm, status: e.target.value as ConsumptionStatus })}>
-              <option value="retirado">Retirado</option>
-              <option value="no_retirado">No retiró</option>
-              <option value="reprogramado">Reprogramado</option>
-            </select>
+            <h3 className="font-semibold">Consumos por mes</h3>
+            <p className="text-xs text-muted-foreground">Para consultar. La carga diaria y las correcciones se hacen desde la planilla de consumos.</p>
           </div>
-          <div><Label>Cantidad</Label><Input type="number" min={0} value={manualForm.cantidad} onChange={e => setManualForm({ ...manualForm, cantidad: Number(e.target.value) })} /></div>
-          <div className="flex items-end"><Button className="w-full" onClick={handleManualConsumption}>Guardar movimiento</Button></div>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/admin/consumos"><CalendarCheck className="w-4 h-4 mr-2" />Abrir planilla de consumos</Link>
+          </Button>
         </div>
-        <div><Label>Notas</Label><Textarea value={manualForm.notas} onChange={e => setManualForm({ ...manualForm, notas: e.target.value })} placeholder="Ej: se llevó 2 viandas, quedó una a favor, se corrigió conteo, etc." /></div>
+        <ClientMonthlyHistory key={historyKey} consumptions={consumptions} plans={clientPlans} />
       </div>
 
       {/* Ajustes y saldos a favor */}
       <div className="mb-6">
-        <ClientCreditNotes clientId={client.id} />
+        <ClientCreditNotes clientId={client.id} onChange={setCreditNotes} />
       </div>
 
       {/* Historial de puntos — solo movimientos relevantes (sin consumos individuales) */}
@@ -685,7 +692,7 @@ export default function ClientDetail() {
                 <div key={point.id} className="flex items-center justify-between border-b border-border pb-2">
                   <div>
                     <p className="text-sm font-medium">{point.motivo}</p>
-                    <p className="text-xs text-muted-foreground">{new Date(point.fecha).toLocaleDateString('es-AR')}</p>
+                    <p className="text-xs text-muted-foreground">{formatTimestampDateAR(point.fecha)}</p>
                   </div>
                   <Badge variant={point.puntos >= 0 ? 'default' : 'destructive'}>{point.puntos >= 0 ? '+' : ''}{point.puntos}</Badge>
                 </div>

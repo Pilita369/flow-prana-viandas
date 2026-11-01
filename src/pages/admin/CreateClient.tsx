@@ -1,3 +1,4 @@
+import { todayISO } from '@/lib/consumo';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -49,7 +50,7 @@ export default function CreateClient() {
     ajusteInicialUsadas: 0,
     modalidad: 'fijo' as PlanModality,
     precioUnitario: businessConfig.precioBaseRetiro,
-    fechaInicio: new Date().toISOString().split('T')[0],
+    fechaInicio: todayISO(),
     fechaFin: '',
     tipoEntrega: 'retiro' as DeliveryType,
     direccionEnvio: '',

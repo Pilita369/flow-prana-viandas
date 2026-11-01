@@ -1,3 +1,4 @@
+import { addDaysISO, todayISO } from '@/lib/consumo';
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
@@ -40,7 +41,7 @@ export default function ClientHome() {
       setPlan(activePlan);
       setUsadas(await getCantidadUsada(activePlan));
       setDisponibles(await getDisponibles(activePlan));
-      setCreditNotes(getCreditNotes(foundClient.id));
+      setCreditNotes(await getCreditNotes(foundClient.id).catch(() => []));
 
       const check = await canOrderTomorrow(foundClient.id);
       setOrderCheck(check);
@@ -56,12 +57,10 @@ export default function ClientHome() {
 
   const handleOrder = async () => {
     if (!plan) return;
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
     await createOrder({
       clientId: client.id,
       planId: plan.id,
-      fechaEntrega: tomorrow.toISOString().split('T')[0],
+      fechaEntrega: addDaysISO(todayISO(), 1),
       creadoPor: 'cliente',
     });
     toast.success('Pedido enviado para mañana');

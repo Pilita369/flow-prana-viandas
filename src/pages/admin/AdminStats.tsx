@@ -1,3 +1,4 @@
+import { todayISO } from '@/lib/consumo';
 import { useEffect, useState } from 'react';
 import { loadConsumptions, loadPlans, getClients } from '@/lib/store';
 import { formatCurrencyAR } from '@/lib/business';
@@ -27,8 +28,7 @@ export default function AdminStats() {
 
   // Mes seleccionado (YYYY-MM)
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    return todayISO().slice(0, 7);
   });
 
   useEffect(() => {

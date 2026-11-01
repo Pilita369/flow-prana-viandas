@@ -35,19 +35,19 @@ export default function ClientHistory() {
           {consumptions.map((consumption) => (
             <div key={consumption.id} className="glass-card p-3 flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-medium">{consumption.fecha}</p>
+                <p className="text-sm font-medium">{consumption.fecha.split('-').reverse().join('/')}</p>
                 <p className="text-xs text-muted-foreground">
-                  {consumption.cantidad} vianda(s) · {consumption.tipo}
+                  {consumption.cantidad} vianda(s)
                   {consumption.notas ? ` · ${consumption.notas}` : ''}
                 </p>
               </div>
               <Badge variant={
                 consumption.status === 'retirado' || consumption.status === 'consumido' ? 'default'
-                : consumption.status === 'no_retirado' || consumption.status === 'no_retiro' ? 'destructive'
+                : consumption.status === 'no_retirado' || consumption.status === 'no_retiro' ? 'outline'
                 : 'secondary'
               }>
-                {consumption.status === 'retirado' || consumption.status === 'consumido' ? '✓ Retirado'
-                : consumption.status === 'no_retirado' || consumption.status === 'no_retiro' ? '✗ No retiró'
+                {consumption.status === 'retirado' || consumption.status === 'consumido' ? '✓ Consumida'
+                : consumption.status === 'no_retirado' || consumption.status === 'no_retiro' ? 'Sin consumo'
                 : '↻ Reprogramado'}
               </Badge>
             </div>
