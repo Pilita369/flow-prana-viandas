@@ -5,37 +5,38 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { X, Plus, Settings } from 'lucide-react';
+import { setFeriado, useFeriados } from '@/lib/feriados';
 
 export default function AdminSettings() {
   const [config, setConfig] = useState(getBusinessConfig());
   const [newFeriado, setNewFeriado] = useState('');
   const [saving, setSaving] = useState(false);
+  const { lista: feriados } = useFeriados();
 
   useEffect(() => { setConfig(getBusinessConfig()); }, []);
 
   const handleSaveGeneral = () => {
     setSaving(true);
-    try { saveBusinessConfig(config); toast.success('Configuración guardada'); }
+    try { saveBusinessConfig({ ...config, feriados }); toast.success('Configuración guardada'); }
     finally { setSaving(false); }
   };
 
-  const addFeriado = () => {
+  // Los feriados se guardan en Supabase: se ven igual desde la computadora y el celular
+  const addFeriado = async () => {
     if (!newFeriado) return;
-    if (config.feriados.includes(newFeriado)) { toast.error('Esa fecha ya está cargada'); return; }
-    const updated = [...config.feriados, newFeriado].sort();
-    const newConfig = { ...config, feriados: updated };
-    setConfig(newConfig);
-    saveBusinessConfig(newConfig);
-    setNewFeriado('');
-    toast.success(`${formatDateAR(newFeriado)} agregado como día no laborable`);
+    if (feriados.includes(newFeriado)) { toast.error('Esa fecha ya está cargada'); return; }
+    try {
+      await setFeriado(newFeriado, true);
+      setNewFeriado('');
+      toast.success(`${formatDateAR(newFeriado)} agregado como día no laborable`);
+    } catch (e) { console.error(e); toast.error('No se pudo guardar el feriado'); }
   };
 
-  const removeFeriado = (fecha: string) => {
-    const updated = config.feriados.filter(f => f !== fecha);
-    const newConfig = { ...config, feriados: updated };
-    setConfig(newConfig);
-    saveBusinessConfig(newConfig);
-    toast.success(`${formatDateAR(fecha)} eliminado`);
+  const removeFeriado = async (fecha: string) => {
+    try {
+      await setFeriado(fecha, false);
+      toast.success(`${formatDateAR(fecha)} eliminado`);
+    } catch (e) { console.error(e); toast.error('No se pudo quitar el feriado'); }
   };
 
   return (
@@ -71,7 +72,7 @@ export default function AdminSettings() {
         <div>
           <h2 className="font-semibold">Días no laborables</h2>
           <p className="text-xs text-muted-foreground mt-1">
-            Estos días <strong>no cuentan</strong> en los planes ni aparecen como días de retiro. Cargalos vos manualmente.
+            Estos días <strong>no cuentan</strong> en los planes ni aparecen como días de retiro. Valen para todos los clientes y se ven desde cualquier dispositivo. También podés marcarlos desde el calendario de la ficha de un cliente.
           </p>
         </div>
 
@@ -85,11 +86,11 @@ export default function AdminSettings() {
           </Button>
         </div>
 
-        {config.feriados.length === 0 ? (
+        {feriados.length === 0 ? (
           <p className="text-sm text-muted-foreground italic">Sin días no laborables cargados. Agregá los que necesitás.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {config.feriados.sort().map(fecha => (
+            {feriados.map(fecha => (
               <div key={fecha} className="flex items-center gap-1.5 bg-muted rounded-full px-3 py-1 text-sm">
                 <span>{formatDateAR(fecha)}</span>
                 <button onClick={() => removeFeriado(fecha)} className="text-muted-foreground hover:text-destructive transition-colors ml-1">
@@ -100,7 +101,7 @@ export default function AdminSettings() {
           </div>
         )}
 
-        <p className="text-xs text-muted-foreground">Total: <strong>{config.feriados.length}</strong> días cargados</p>
+        <p className="text-xs text-muted-foreground">Total: <strong>{feriados.length}</strong> días cargados</p>
       </div>
     </div>
   );

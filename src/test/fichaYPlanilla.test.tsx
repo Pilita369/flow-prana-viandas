@@ -5,18 +5,22 @@ import { useState } from 'react';
 
 // Base en memoria que imita supabase-js (misma que usan las otras pruebas).
 type Row = Record<string, unknown>;
-const db: Record<string, Row[]> = { consumptions: [], points: [], clients: [] };
+const db: Record<string, Row[]> = { consumptions: [], points: [], clients: [], feriados: [], plans: [] };
 let seq = 0;
 
 function query(table: string) {
   const filters: ((r: Row) => boolean)[] = [];
-  let op: 'select' | 'update' | 'delete' | 'insert' = 'select';
+  let op: 'select' | 'update' | 'delete' | 'insert' | 'upsert' = 'select';
   let payload: Row | Row[] | null = null;
   let single = false;
   const run = () => {
     const match = (r: Row) => filters.every(f => f(r));
     let data: Row[] = [];
-    if (op === 'insert') {
+    if (op === 'upsert') {
+      const list = Array.isArray(payload) ? payload : [payload!];
+      list.forEach(r => { if (!db[table].some(x => x.fecha === r.fecha)) db[table].push({ ...r }); });
+      data = list;
+    } else if (op === 'insert') {
       const list = Array.isArray(payload) ? payload : [payload!];
       list.forEach(r => db[table].push({ created_at: `t${++seq}`, ...r }));
       data = list;
@@ -38,6 +42,7 @@ function query(table: string) {
     update: (p: Row) => { op = 'update'; payload = p; return b; },
     insert: (p: Row | Row[]) => { op = 'insert'; payload = p; return b; },
     delete: () => { op = 'delete'; return b; },
+    upsert: (p: Row | Row[]) => { op = 'upsert'; payload = p; return b; },
     maybeSingle: () => { single = true; return b; },
     single: () => { single = true; return b; },
     then: (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(run()).then(res, rej),
@@ -48,6 +53,7 @@ function query(table: string) {
 vi.mock('@/lib/supabase', () => ({ supabase: { from: (t: string) => query(t) } }));
 
 const store = await import('@/lib/store');
+const feriadosLib = await import('@/lib/feriados');
 const { default: ClientConsumptionCalendar } = await import('@/components/ClientConsumptionCalendar');
 import type { Client, Consumption, Plan } from '@/types';
 
@@ -87,11 +93,18 @@ beforeAll(() => {
   vi.setSystemTime(new Date('2026-11-10T15:00:00Z')); // 10/11/2026 12:00 en Argentina
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   db.clients = [{ id: 'c1', nombre: 'Ana', apellido: 'Pérez', puntos: 1 }];
   db.points = [];
+  db.feriados = [];
+  db.plans = [{
+    id: 'p-nov', client_id: 'c1', cantidad_contratada: 20, ajuste_inicial_usadas: 0, modalidad: 'fijo', precio_unitario: 1000,
+    total_calculado: 20000, fecha_inicio: '2026-11-01', fecha_fin: '2026-11-30', tipo_entrega: 'retiro', unidades_por_retiro: 1,
+    activo: true, dias_fijos: ['lunes', 'martes', 'miercoles', 'jueves', 'viernes'], fechas_excluidas: [], credit_notes: [],
+  }];
   // Un consumo ya cargado desde la planilla general: 1 vianda el 03/11
   db.consumptions = [{ id: 'r1', client_id: 'c1', plan_id: 'p-nov', fecha: '2026-11-03', status: 'retirado', tipo: 'manual', cantidad: 1, notas: null, created_at: 't0' }];
+  await feriadosLib.loadFeriados(true); // los feriados en memoria vuelven a los de la base
 });
 
 describe('ficha del cliente y planilla general sobre los mismos registros', () => {
@@ -131,6 +144,41 @@ describe('ficha del cliente y planilla general sobre los mismos registros', () =
     await elegir(/^04\/11\/2026/, '0');
     await waitFor(() => expect(rowsDelDia('2026-11-04')).toHaveLength(1));
     expect(rowsDelDia('2026-11-04')[0]).toMatchObject({ cantidad: 0, status: 'no_retirado', plan_id: 'p-nov' });
+  });
+
+  it('marcar feriado guarda la fecha, no toca consumos y pide confirmar antes de cambiar el contrato', async () => {
+    render(<Ficha initial={await store.loadClientConsumptionsOrThrow('c1')} />);
+    fireEvent.click(screen.getByRole('radio', { name: /Marcar feriados/ }));
+    // En este modo se pueden marcar fechas futuras y tocar un día no abre el editor de consumos
+    fireEvent.click(dayButton(/^03\/11\/2026/));
+    await waitFor(() => expect(db.feriados.map(r => r.fecha)).toEqual(['2026-11-03']));
+    const dialogo = await screen.findByRole('dialog');
+    expect(within(dialogo).getByText(/¿Actualizar el contrato\?/)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/1 vianda\(s\) registradas/)).toBeInTheDocument();
+    // El consumo de ese día sigue igual y el contrato no cambió
+    expect(rowsDelDia('2026-11-03')).toHaveLength(1);
+    expect(consumidas()).toBe(1);
+    expect(db.plans[0].cantidad_contratada).toBe(20);
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Dejar el contrato como está' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(db.plans[0].cantidad_contratada).toBe(20);
+
+    // Una fecha futura también se puede marcar
+    expect(dayButton(/^20\/11\/2026/)).not.toBeDisabled();
+  });
+
+  it('al confirmar el recálculo, el contrato baja por la diferencia de días hábiles y queda anotado', async () => {
+    render(<Ficha initial={await store.loadClientConsumptionsOrThrow('c1')} />);
+    fireEvent.click(screen.getByRole('radio', { name: /Marcar feriados/ }));
+    fireEvent.click(dayButton(/^20\/11\/2026/));
+    const dialogo = await screen.findByRole('dialog');
+    expect(within(dialogo).getByRole('button', { name: 'Actualizar contrato' })).toBeDisabled(); // nada marcado por defecto
+    fireEvent.click(within(dialogo).getByRole('checkbox'));
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Actualizar contrato' }));
+    await waitFor(() => expect(db.plans[0].cantidad_contratada).toBe(19));
+    expect(db.plans[0].total_calculado).toBe(19000);
+    expect(String(db.plans[0].observaciones)).toMatch(/21 → 20 días hábiles, 20 → 19 viandas/);
+    expect(db.consumptions).toHaveLength(1);
   });
 
   it('los días futuros no se pueden cargar', async () => {

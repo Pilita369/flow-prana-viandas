@@ -1,4 +1,5 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
+import { loadFeriados } from '@/lib/feriados';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -22,6 +23,8 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { theme, toggle } = useAdminTheme();
+  // Feriados compartidos: se leen de Supabase para que isHoliday y los cálculos usen la misma lista en todos los dispositivos
+  useEffect(() => { loadFeriados().catch(e => console.error('No se pudieron leer los feriados:', e)); }, []);
 
   const handleLogout = () => {
     sessionStorage.removeItem('mp_admin');

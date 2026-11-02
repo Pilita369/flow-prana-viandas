@@ -19,6 +19,8 @@ import ClientConsumptionCalendar from '@/components/ClientConsumptionCalendar';
 import { useRefreshOnReturn } from '@/hooks/useConsumptionSaver';
 import { formatCurrencyAR, formatDateAR, getDiasEstimadosFromPlan, calculateFixedPlanEstimatedEndDate, calcularTotalContrato } from '@/lib/business';
 import { toast } from 'sonner';
+import { useFeriados } from '@/lib/feriados';
+import { LUNES_A_VIERNES, contarDiasHabiles, isExcluidaCliente, viandasNecesarias } from '@/lib/habiles';
 import type { Client, Plan, Consumption, PointTransaction, DayOfWeek, CreditNote } from '@/types';
 import ClientCreditNotes from '@/components/ClientCreditNotes';
 
@@ -29,6 +31,13 @@ const DAYS: { value: DayOfWeek; label: string }[] = [
   { value: 'jueves', label: 'Jueves' },
   { value: 'viernes', label: 'Viernes' },
 ];
+
+/** Días excluidos del cliente dentro de un período (según el contrato al que corresponde cada fecha). */
+function enumerarExcluidas(plans: Plan[], inicio: string, fin: string): string[] {
+  if (!inicio || !fin || inicio > fin) return [];
+  const fechas = new Set(plans.flatMap(p => p.fechasExcluidas || []));
+  return Array.from(fechas).filter(d => d >= inicio && d <= fin && isExcluidaCliente(plans, d)).sort();
+}
 
 function getRenovacionPuntos(): number {
   try {
@@ -75,8 +84,11 @@ export default function ClientDetail() {
 
   // Estado de renovación
   const [renovando, setRenovando] = useState(false);
+  const { feriados } = useFeriados();
   const [renovForm, setRenovForm] = useState({
     necesita: 0,
+    /** true = la cantidad la escribió a mano; false = se toma de los días hábiles. */
+    necesitaManual: false,
     saldoAplicado: 0,
     precioUnitario: 0,
     costoEnvio: 0,
@@ -149,6 +161,12 @@ export default function ClientDetail() {
   const refreshAfterCredits = async (notes: CreditNote[]) => {
     if (!id) return;
     setCreditNotes(notes);
+    await refreshPlans();
+  };
+
+  /** Relee los contratos (después de marcar días excluidos, recalcular o sumar ajustes). */
+  const refreshPlans = async () => {
+    if (!id) return;
     const [activePlan, allPlans] = await Promise.all([getActivePlan(id), getClientPlans(id)]);
     setPlan(activePlan || null);
     setClientPlans(allPlans);
@@ -168,15 +186,25 @@ export default function ClientDetail() {
   const viandasPendientes = creditosPendientes.reduce((acc, n) => acc + (n.cantidad || 0), 0);
   const [sumarPendientes, setSumarPendientes] = useState(true);
 
+  // Días hábiles del período a renovar: lunes a viernes (o los días del contrato) sin feriados ni días excluidos
+  const excluidasRenov = enumerarExcluidas(clientPlans, renovForm.fechaInicio, renovForm.fechaFin);
+  const habilesRenov = contarDiasHabiles(renovForm.fechaInicio, renovForm.fechaFin, {
+    diasFijos: renovForm.modalidad === 'fijo' ? renovForm.diasFijos : LUNES_A_VIERNES, feriados, excluidas: excluidasRenov,
+  });
+  const necesariasCalc = viandasNecesarias(habilesRenov.habiles, renovForm.unidadesPorRetiro);
+  const necesitaRenov = renovForm.necesitaManual || renovForm.modalidad !== 'fijo' ? Number(renovForm.necesita) : necesariasCalc;
+
   const openRenovar = () => {
     if (!plan) return;
     // Fecha inicio = día siguiente al fin del plan actual (o hoy si ya pasó)
     const today = todayISO();
     const inicio = plan.fechaFin >= today ? addDaysISO(plan.fechaFin, 1) : today;
-    const fin = addMonthsISO(inicio, 1);
+    // Un mes completo: del 02/11 al 01/12 (ambos incluidos)
+    const fin = addDaysISO(addMonthsISO(inicio, 1), -1);
 
     setRenovForm({
       necesita: plan.cantidadContratada,
+      necesitaManual: plan.modalidad !== 'fijo',
       saldoAplicado: saldoAFavorActivo,
       precioUnitario: plan.precioUnitario,
       costoEnvio: plan.costoEnvio || 0,
@@ -196,8 +224,8 @@ export default function ClientDetail() {
 
   const handleConfirmarRenovacion = async () => {
     if (!client || !plan) return;
-    const { aplicar, comprar: comprarSinAjustes } = splitCarryOver(Number(renovForm.necesita), Math.min(Number(renovForm.saldoAplicado), saldoAFavorActivo));
-    if (renovForm.necesita <= 0) { toast.error('Indicá cuántas viandas necesita para el período'); return; }
+    const { aplicar, comprar: comprarSinAjustes } = splitCarryOver(necesitaRenov, Math.min(Number(renovForm.saldoAplicado), saldoAFavorActivo));
+    if (necesitaRenov <= 0) { toast.error('Indicá cuántas viandas necesita para el período'); return; }
     const pendientesIds = sumarPendientes ? creditosPendientes.map(n => n.id) : [];
     const ajustes = sumarPendientes ? viandasPendientes : 0;
     const comprar = Math.max(comprarSinAjustes - ajustes, 0);
@@ -224,6 +252,8 @@ export default function ClientDetail() {
           horaLimite: renovForm.modalidad === 'flexible' ? renovForm.horaLimite : undefined,
           observaciones: [renovForm.observaciones, notaSaldo].filter(Boolean).join('\n') || undefined,
           ajusteInicialUsadas: 0,
+          // Días excluidos del cliente ya marcados dentro del nuevo período
+          fechasExcluidas: excluidasRenov,
         },
         getRenovacionPuntos()
       );
@@ -281,7 +311,10 @@ export default function ClientDetail() {
     : plan?.fechaFin || '';
 
   const totalEditado = calcularTotalContrato(planEdit.cantidadContratada, planEdit.precioUnitario);
-  const renovBase = splitCarryOver(renovForm.necesita, Math.min(renovForm.saldoAplicado, saldoAFavorActivo));
+  const habilesEdit = planEdit.modalidad === 'fijo' && plan
+    ? contarDiasHabiles(planEdit.fechaInicio, planEdit.fechaFin, { diasFijos: planEdit.diasFijos, feriados, excluidas: plan.fechasExcluidas || [] })
+    : null;
+  const renovBase = splitCarryOver(necesitaRenov, Math.min(renovForm.saldoAplicado, saldoAFavorActivo));
   const ajustesRenov = sumarPendientes ? viandasPendientes : 0;
   const renovSplit = { aplicar: renovBase.aplicar, comprar: Math.max(renovBase.comprar - ajustesRenov, 0) };
   const totalRenov = calcularTotalContrato(renovSplit.comprar, renovForm.precioUnitario);
@@ -339,7 +372,7 @@ export default function ClientDetail() {
             <div className="rounded-lg bg-amber-500/10 text-amber-800 text-sm px-3 py-2">
               <strong>Saldo a favor: {saldoAFavorActivo} vianda(s)</strong> sin consumir en el contrato actual
               {(balanceActivo?.ajusteManual || 0) > 0 && ` (incluye ${balanceActivo?.ajusteManual} de ajustes manuales)`}.
-              Si necesita {renovForm.necesita || 0}, puede aplicar {renovSplit.aplicar}{ajustesRenov > 0 ? `, sumar ${ajustesRenov} de ajustes pendientes` : ''} y comprar {renovSplit.comprar} nuevas.
+              Si necesita {necesitaRenov || 0}, puede aplicar {renovSplit.aplicar}{ajustesRenov > 0 ? `, sumar ${ajustesRenov} de ajustes pendientes` : ''} y comprar {renovSplit.comprar} nuevas.
               Ajustá cuánto aplicar según lo que acordaste con el cliente.
             </div>
           )}
@@ -354,10 +387,35 @@ export default function ClientDetail() {
             </label>
           )}
 
+          {/* Cálculo del período: días hábiles → viandas necesarias → saldo → nuevas a comprar → importe */}
+          <div className="rounded-lg border-2 border-primary/60 bg-primary/5 p-3 space-y-2">
+            <p className="font-semibold">Cálculo del período {formatDateAR(renovForm.fechaInicio)} al {formatDateAR(renovForm.fechaFin)}</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-center">
+              <CalcTile label="Días hábiles" value={String(habilesRenov.habiles)} />
+              <CalcTile label="Viandas necesarias" value={String(necesitaRenov)} />
+              <CalcTile label="Saldo a aplicar" value={String(renovSplit.aplicar)} />
+              <CalcTile label="Ajustes pendientes" value={String(ajustesRenov)} />
+              <CalcTile label="Nuevas a comprar" value={String(renovSplit.comprar)} strong />
+              <CalcTile label="Importe" value={formatCurrencyAR(totalRenov)} strong />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {habilesRenov.diasDelPeriodo} días {renovForm.modalidad === 'fijo' && renovForm.diasFijos.length < 5 ? 'de retiro' : 'de lunes a viernes'}
+              {' '}− {habilesRenov.feriados.length} feriado(s) − {habilesRenov.excluidas.length} día(s) excluido(s) = {habilesRenov.habiles} hábiles
+              {renovForm.modalidad === 'fijo' && ` × ${renovForm.unidadesPorRetiro || 1} por retiro`}.
+              {' '}Un día que es feriado y además está excluido se descuenta una sola vez.
+            </p>
+            {renovForm.modalidad === 'fijo' && renovForm.necesitaManual && Number(renovForm.necesita) !== necesariasCalc && (
+              <p className="text-sm">
+                Cargaste {renovForm.necesita} a mano; por días hábiles serían {necesariasCalc}.{' '}
+                <Button variant="outline" size="sm" className="h-9" onClick={() => setRenovForm({ ...renovForm, necesitaManual: false })}>Usar {necesariasCalc}</Button>
+              </p>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div>
               <Label className="text-xs">{saldoAFavorActivo > 0 || ajustesRenov > 0 ? 'Viandas que necesita' : 'Cantidad contratada'}</Label>
-              <Input type="number" min={0} value={renovForm.necesita} onChange={e => setRenovForm({ ...renovForm, necesita: Number(e.target.value) })} className="h-8 text-sm" />
+              <Input type="number" min={0} value={necesitaRenov} onChange={e => setRenovForm({ ...renovForm, necesita: Number(e.target.value), necesitaManual: true })} className="h-8 text-sm" />
             </div>
             {saldoAFavorActivo > 0 && (
               <div>
@@ -476,6 +534,8 @@ export default function ClientDetail() {
                 plans={clientPlans}
                 consumptions={consumptions}
                 onConsumptionsChange={next => { void refreshAfterConsumption(next); }}
+                onPlansChange={refreshPlans}
+                viandasPendientes={viandasPendientes}
               />
               <ClientCreditNotes clientId={client.id} plans={clientPlans} activePlan={plan} onChange={notes => { void refreshAfterCredits(notes); }} />
             </div>
@@ -557,6 +617,26 @@ export default function ClientDetail() {
                           <Input type="date" value={planEdit.fechaFin} onChange={e => setPlanEdit({ ...planEdit, fechaFin: e.target.value })} className="h-8 text-sm" />
                         </div>
                       </div>
+
+                      {habilesEdit && plan && (() => {
+                        const necesarias = viandasNecesarias(habilesEdit.habiles, planEdit.unidadesPorRetiro);
+                        const cubiertas = (plan.saldoAnteriorAplicado || 0) + (plan.ajusteManualFavor || 0);
+                        const comprar = Math.max(necesarias - cubiertas, 0);
+                        return (
+                          <div className="rounded-lg border-2 border-border bg-muted/30 p-3 text-sm space-y-2">
+                            <p>
+                              <strong>{habilesEdit.habiles} días hábiles</strong> del {formatDateAR(planEdit.fechaInicio)} al {formatDateAR(planEdit.fechaFin)}
+                              {' '}({habilesEdit.diasDelPeriodo} − {habilesEdit.feriados.length} feriado(s) − {habilesEdit.excluidas.length} excluido(s))
+                              {' '}→ {necesarias} viandas{cubiertas > 0 && `, ${cubiertas} ya cubiertas por saldo y ajustes`} → <strong>{comprar} a comprar</strong>.
+                            </p>
+                            {comprar !== Number(planEdit.cantidadContratada) && (
+                              <Button variant="outline" size="sm" className="h-9" onClick={() => setPlanEdit({ ...planEdit, cantidadContratada: comprar })}>
+                                Usar {comprar} ({formatCurrencyAR(calcularTotalContrato(comprar, planEdit.precioUnitario))})
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {planEdit.modalidad === 'fijo' && (
                         <div>
@@ -668,7 +748,10 @@ export default function ClientDetail() {
               {/* Fechas excluidas */}
               {plan && (
                 <div className="glass-card p-5 space-y-4">
-                  <h3 className="font-semibold">Fechas excluidas para este cliente</h3>
+                  <div>
+                    <h3 className="font-semibold">Fechas excluidas para este cliente</h3>
+                    <p className="text-sm text-muted-foreground">También podés marcarlas tocando "Marcar feriados" en el calendario.</p>
+                  </div>
                   <div className="flex gap-2">
                     <Input type="date" value={newExcludedDate} onChange={e => setNewExcludedDate(e.target.value)} />
                     <Button variant="outline" onClick={addExcludedDate}>Agregar fecha</Button>
@@ -709,6 +792,15 @@ export default function ClientDetail() {
           <ClientPointsPanel puntos={client.puntos} points={points} />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function CalcTile({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div className={`rounded-lg border-2 p-2 ${strong ? 'border-primary bg-primary/15' : 'border-border bg-card'}`}>
+      <p className="text-xs leading-tight text-muted-foreground">{label}</p>
+      <p className="text-lg font-bold tabular-nums">{value}</p>
     </div>
   );
 }

@@ -8,7 +8,8 @@ import { Popover, PopoverContent } from '@/components/ui/popover';
 import ConsumptionCellEditor from '@/components/ConsumptionCellEditor';
 import CarryOverDialog from '@/components/CarryOverDialog';
 import { loadClients, loadPlans, loadConsumptionsOrThrow } from '@/lib/store';
-import { formatDateAR, getBusinessConfig } from '@/lib/business';
+import { formatDateAR } from '@/lib/business';
+import { useFeriados } from '@/lib/feriados';
 import {
   computePlanBalance, dayTotal, getNextPlan, monthDays, parseISODate, planForMonth,
   resolvePlanForDate, todayISO, isConsumed, capFirst, type PlanBalance,
@@ -36,7 +37,7 @@ export default function DailyConsumptions() {
   const year = Number(mes.slice(0, 4));
   const month0 = Number(mes.slice(5, 7)) - 1;
   const days = useMemo(() => monthDays(year, month0), [year, month0]);
-  const feriados = useMemo(() => new Set(getBusinessConfig().feriados), []);
+  const { feriados } = useFeriados();
 
   const [clients, setClients] = useState<Client[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
