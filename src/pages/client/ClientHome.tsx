@@ -120,14 +120,9 @@ export default function ClientHome() {
             </div>
             <div className="border-t border-border pt-3 space-y-1">
               {(() => {
-                const pendingNotes = creditNotes.filter(n => !n.aplicado);
-                const descMoneda = pendingNotes
-                  .filter(n => n.tipo === 'saldo_envio' || n.tipo === 'descuento')
-                  .reduce((acc, n) => acc + (n.monto || 0), 0);
-                const descViandas = pendingNotes
-                  .filter(n => n.tipo === 'vianda_favor')
-                  .reduce((acc, n) => acc + (n.cantidad || 0) * plan.precioUnitario, 0);
-                const totalAjustes = descMoneda + descViandas;
+                // Solo ajustes en dinero: las viandas a favor ya están sumadas en "Disponibles"
+                const pendingNotes = creditNotes.filter(n => !n.aplicado && !n.anulado && (n.tipo === 'saldo_envio' || n.tipo === 'descuento'));
+                const totalAjustes = pendingNotes.reduce((acc, n) => acc + (n.monto || 0), 0);
                 const envio = plan.tipoEntrega === 'envio' ? (plan.costoEnvio || 0) : 0;
                 const totalNeto = plan.totalCalculado + envio - totalAjustes;
 

@@ -9,6 +9,7 @@ import type {
   Redemption,
   CreditNote,
   CreditNoteTipo,
+  CreditNoteChange,
   DayOfWeek,
   ConsumptionStatus,
   OrderStatus,
@@ -115,6 +116,17 @@ function rowToClient(row: Record<string, unknown>): Client {
   };
 }
 
+/** Los contratos se leen junto con sus ajustes manuales de viandas a favor. */
+const PLAN_SELECT = '*, credit_notes(cantidad, tipo, anulado)';
+
+function sumAjusteManual(row: Record<string, unknown>): number {
+  const notes = row.credit_notes as { cantidad: number | null; tipo: string; anulado: boolean }[] | undefined;
+  if (!Array.isArray(notes)) return 0;
+  return notes
+    .filter(n => n.tipo === 'vianda_favor' && !n.anulado)
+    .reduce((acc, n) => acc + Math.max(Number(n.cantidad) || 0, 0), 0);
+}
+
 function rowToPlan(row: Record<string, unknown>): Plan {
   return {
     id: row.id as string,
@@ -138,6 +150,7 @@ function rowToPlan(row: Record<string, unknown>): Plan {
     observaciones: row.observaciones as string | undefined,
     saldoAnteriorAplicado: Number(row.saldo_anterior_aplicado || 0),
     saldoOrigenPlanId: (row.saldo_origen_plan_id as string) || undefined,
+    ajusteManualFavor: sumAjusteManual(row),
   };
 }
 
@@ -348,7 +361,7 @@ export async function deleteClient(id: string): Promise<void> {
 export async function loadPlans(): Promise<Plan[]> {
   const { data, error } = await supabase
     .from('plans')
-    .select('*')
+    .select(PLAN_SELECT)
     .order('fecha_inicio', { ascending: false });
 
   if (error) {
@@ -410,7 +423,7 @@ export async function createPlan(
   const { data: inserted, error } = await supabase
     .from('plans')
     .insert(newPlan)
-    .select()
+    .select(PLAN_SELECT)
     .single();
 
   if (error) {
@@ -456,7 +469,7 @@ export async function updatePlan(id: string, data: Partial<Plan>): Promise<Plan 
     .from('plans')
     .update(payload)
     .eq('id', id)
-    .select()
+    .select(PLAN_SELECT)
     .maybeSingle();
 
   if (error) {
@@ -503,7 +516,7 @@ export async function getDisponibles(plan?: Plan | null): Promise<number> {
     .filter((p) => p.saldoOrigenPlanId === plan.id)
     .reduce((acc, p) => acc + (p.saldoAnteriorAplicado || 0), 0);
   return Math.max(
-    plan.cantidadContratada + (plan.saldoAnteriorAplicado || 0) - (await getCantidadUsada(plan)) - trasladado,
+    plan.cantidadContratada + (plan.saldoAnteriorAplicado || 0) + (plan.ajusteManualFavor || 0) - (await getCantidadUsada(plan)) - trasladado,
     0
   );
 }
@@ -554,7 +567,7 @@ export async function applyCarryOver(params: {
     .from('plans')
     .update(payload)
     .eq('id', toPlan.id)
-    .select()
+    .select(PLAN_SELECT)
     .single();
 
   if (error) {
@@ -983,7 +996,23 @@ function rowToCreditNote(row: any): CreditNote {
     cantidad: row.cantidad === null || row.cantidad === undefined ? undefined : Number(row.cantidad),
     fecha: row.fecha,
     aplicado: !!row.aplicado,
+    planId: row.plan_id || undefined,
+    anulado: !!row.anulado,
+    anuladoMotivo: row.anulado_motivo || undefined,
+    anuladoAt: row.anulado_at || undefined,
+    historial: Array.isArray(row.historial) ? row.historial : [],
   };
+}
+
+function cambio(accion: CreditNoteChange['accion'], detalle: string): CreditNoteChange {
+  return { fecha: new Date().toISOString(), accion, detalle };
+}
+
+function planLabel(planId: string | undefined, plans: Plan[]): string {
+  const p = planId ? plans.find(x => x.id === planId) : undefined;
+  if (!p) return 'pendiente (sin contrato)';
+  const f = (iso: string) => iso.split('-').reverse().join('/');
+  return `contrato ${f(p.fechaInicio)} a ${f(p.fechaFin)}`;
 }
 
 let creditNotesMigration: Promise<void> | null = null;
@@ -1048,7 +1077,19 @@ export async function getCreditNotes(clientId: string): Promise<CreditNote[]> {
   return (data || []).map(rowToCreditNote);
 }
 
-export async function saveCreditNote(data: Omit<CreditNote, 'id' | 'fecha' | 'aplicado'>): Promise<CreditNote> {
+export async function saveCreditNote(
+  data: Omit<CreditNote, 'id' | 'fecha' | 'aplicado' | 'anulado' | 'historial'>
+): Promise<CreditNote> {
+  const esVianda = data.tipo === 'vianda_favor';
+  const cantidad = esVianda ? Math.floor(Number(data.cantidad)) : data.cantidad;
+  if (esVianda && !(Number(cantidad) > 0)) throw new Error('Indicá cuántas viandas a favor');
+  const plans = esVianda ? await loadPlans() : [];
+  if (esVianda && data.planId && !plans.some(p => p.id === data.planId && p.clientId === data.clientId)) {
+    throw new Error('El contrato elegido no es de este cliente');
+  }
+  const detalle = esVianda
+    ? `${cantidad} vianda(s) a favor, suma a ${planLabel(data.planId, plans)}`
+    : data.monto ? `Monto ${data.monto}` : 'Registrado';
   const { data: row, error } = await supabase
     .from('credit_notes')
     .insert({
@@ -1056,23 +1097,133 @@ export async function saveCreditNote(data: Omit<CreditNote, 'id' | 'fecha' | 'ap
       tipo: data.tipo,
       descripcion: data.descripcion,
       monto: data.monto ?? null,
-      cantidad: data.cantidad ?? null,
-      aplicado: false,
+      cantidad: cantidad ?? null,
+      plan_id: esVianda ? data.planId || null : null,
+      // Una vianda a favor asignada a un contrato ya está sumada a su saldo.
+      aplicado: esVianda && !!data.planId,
+      historial: [cambio('creado', detalle)],
     })
     .select('*')
     .single();
   if (error) throw error;
+  clearCache();
   return rowToCreditNote(row);
 }
 
-export async function setCreditNoteAplicado(id: string, aplicado: boolean): Promise<void> {
-  const { error } = await supabase.from('credit_notes').update({ aplicado }).eq('id', id);
+async function getCreditNoteOrThrow(id: string): Promise<CreditNote> {
+  const { data, error } = await supabase.from('credit_notes').select('*').eq('id', id).single();
   if (error) throw error;
+  if (!data) throw new Error('No se encontró el ajuste');
+  return rowToCreditNote(data);
+}
+
+/**
+ * Corrige un ajuste manual de viandas (cantidad, motivo o contrato) y deja el cambio en su historial.
+ * Siempre parte de la versión guardada, así el historial refleja lo que había realmente.
+ */
+export async function updateManualCredit(
+  id: string,
+  cambios: { cantidad?: number; descripcion?: string; planId?: string | null },
+  motivo?: string,
+): Promise<CreditNote> {
+  const actual = await getCreditNoteOrThrow(id);
+  if (actual.anulado) throw new Error('El ajuste está anulado');
+  if (actual.tipo !== 'vianda_favor') throw new Error('Solo se corrigen ajustes de viandas');
+  const plans = await loadPlans();
+
+  const cantidad = cambios.cantidad === undefined ? actual.cantidad || 0 : Math.floor(Number(cambios.cantidad));
+  if (!(cantidad > 0)) throw new Error('La cantidad debe ser mayor a 0. Para quitarlo, anulalo.');
+  const descripcion = cambios.descripcion === undefined ? actual.descripcion : cambios.descripcion.trim();
+  const planId = cambios.planId === undefined ? actual.planId : cambios.planId || undefined;
+  if (planId && !plans.some(p => p.id === planId && p.clientId === actual.clientId)) {
+    throw new Error('El contrato elegido no es de este cliente');
+  }
+
+  const partes: string[] = [];
+  if (cantidad !== (actual.cantidad || 0)) partes.push(`cantidad ${actual.cantidad || 0} → ${cantidad}`);
+  if (planId !== actual.planId) partes.push(`${planLabel(actual.planId, plans)} → ${planLabel(planId, plans)}`);
+  if (descripcion !== actual.descripcion) partes.push(`motivo "${actual.descripcion || '-'}" → "${descripcion || '-'}"`);
+  if (partes.length === 0) return actual;
+  const detalle = partes.join('; ') + (motivo?.trim() ? ` (${motivo.trim()})` : '');
+
+  const { data, error } = await supabase
+    .from('credit_notes')
+    .update({
+      cantidad,
+      descripcion,
+      plan_id: planId || null,
+      aplicado: !!planId,
+      historial: [...actual.historial, cambio(planId && !actual.planId ? 'asignado' : 'corregido', detalle)],
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) throw error;
+  clearCache();
+  return rowToCreditNote(data);
+}
+
+/** Anula un ajuste: deja de contar en el saldo, pero queda visible con su historial. */
+export async function anularCreditNote(id: string, motivo?: string): Promise<CreditNote> {
+  const actual = await getCreditNoteOrThrow(id);
+  if (actual.anulado) return actual;
+  const ahora = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('credit_notes')
+    .update({
+      anulado: true,
+      anulado_at: ahora,
+      anulado_motivo: motivo?.trim() || null,
+      historial: [...actual.historial, cambio('anulado', motivo?.trim() ? `Anulado: ${motivo.trim()}` : 'Anulado')],
+      updated_at: ahora,
+    })
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) throw error;
+  clearCache();
+  return rowToCreditNote(data);
+}
+
+/** Viandas a favor cargadas a mano que todavía no suman a ningún contrato. */
+export function isPendingManualCredit(n: CreditNote): boolean {
+  return n.tipo === 'vianda_favor' && !n.anulado && !n.planId && !n.aplicado && (n.cantidad || 0) > 0;
+}
+
+/** Asigna a un contrato los ajustes de viandas pendientes indicados (por ejemplo, al renovar). */
+export async function assignPendingManualCredits(ids: string[], planId: string, motivo: string): Promise<number> {
+  let total = 0;
+  for (const id of ids) {
+    const actual = await getCreditNoteOrThrow(id);
+    if (!isPendingManualCredit(actual)) continue; // ya asignado o anulado: no se cuenta dos veces
+    const n = await updateManualCredit(id, { planId }, motivo);
+    total += n.cantidad || 0;
+  }
+  return total;
+}
+
+export async function setCreditNoteAplicado(id: string, aplicado: boolean): Promise<void> {
+  const actual = await getCreditNoteOrThrow(id);
+  if (actual.tipo === 'vianda_favor' && actual.planId) {
+    throw new Error('Esta vianda a favor ya suma a un contrato; para quitarla, anulala.');
+  }
+  const { error } = await supabase
+    .from('credit_notes')
+    .update({
+      aplicado,
+      historial: [...actual.historial, cambio('corregido', aplicado ? 'Marcado como aplicado' : 'Marcado como pendiente')],
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+  if (error) throw error;
+  clearCache();
 }
 
 export async function deleteCreditNote(id: string): Promise<void> {
   const { error } = await supabase.from('credit_notes').delete().eq('id', id);
   if (error) throw error;
+  clearCache();
 }
 
 // ======================================================

@@ -100,6 +100,8 @@ export interface Plan {
   saldoAnteriorAplicado?: number;
   // Contrato del que proviene ese saldo (trazabilidad)
   saldoOrigenPlanId?: string;
+  // Viandas a favor cargadas a mano y asignadas a este contrato (no anuladas). Se calcula al leer.
+  ajusteManualFavor?: number;
 }
 
 // ==============================================
@@ -177,4 +179,16 @@ export interface CreditNote {
   cantidad?: number;    // en viandas, si aplica
   fecha: string;
   aplicado: boolean;    // para marcar cuando ya se usó/descontó
+  /** Contrato al que suman estas viandas a favor (solo 'vianda_favor'). */
+  planId?: string;
+  anulado: boolean;
+  anuladoMotivo?: string;
+  anuladoAt?: string;
+  historial: CreditNoteChange[];
+}
+
+export interface CreditNoteChange {
+  fecha: string;
+  accion: 'creado' | 'corregido' | 'anulado' | 'asignado';
+  detalle: string;
 }

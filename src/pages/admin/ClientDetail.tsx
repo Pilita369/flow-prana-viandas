@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   getClient, getActivePlan, loadClientConsumptionsOrThrow, getClientPoints, getClientPlans,
   updatePlan,
-  renovarPlan, getCreditNotes,
+  renovarPlan, getCreditNotes, assignPendingManualCredits, isPendingManualCredit,
 } from '@/lib/store';
 import { addDaysISO, addMonthsISO, computePlanBalance, formatTimestampDateAR, splitCarryOver, todayISO, todayLabelAR } from '@/lib/consumo';
 import { Link } from 'react-router-dom';
@@ -143,6 +143,16 @@ export default function ClientDetail() {
     setPoints(clientPoints);
   };
 
+  /** Después de cambiar un ajuste manual: relee contratos (su saldo incluye los ajustes). */
+  const refreshAfterCredits = async (notes: CreditNote[]) => {
+    if (!id) return;
+    setCreditNotes(notes);
+    const [activePlan, allPlans] = await Promise.all([getActivePlan(id), getClientPlans(id)]);
+    setPlan(activePlan || null);
+    setClientPlans(allPlans);
+    setHistoryKey(k => k + 1);
+  };
+
   /** Al volver a la pestaña, relee los consumos (pueden haberse cargado desde la planilla general u otro dispositivo). */
   useRefreshOnReturn(() => {
     if (!id) return;
@@ -155,6 +165,10 @@ export default function ClientDetail() {
   const usadas = balanceActivo ? balanceActivo.ajusteInicial + balanceActivo.consumidas : 0;
   const disponibles = balanceActivo ? Math.max(balanceActivo.disponible, 0) : 0;
   const saldoAFavorActivo = balanceActivo?.aFavorSinAplicar ?? 0;
+  // Viandas a favor cargadas a mano que todavía no suman a ningún contrato: se ofrecen al renovar
+  const creditosPendientes = creditNotes.filter(isPendingManualCredit);
+  const viandasPendientes = creditosPendientes.reduce((acc, n) => acc + (n.cantidad || 0), 0);
+  const [sumarPendientes, setSumarPendientes] = useState(true);
 
   const openRenovar = () => {
     if (!plan) return;
@@ -184,13 +198,16 @@ export default function ClientDetail() {
 
   const handleConfirmarRenovacion = async () => {
     if (!client || !plan) return;
-    const { aplicar, comprar } = splitCarryOver(Number(renovForm.necesita), Math.min(Number(renovForm.saldoAplicado), saldoAFavorActivo));
+    const { aplicar, comprar: comprarSinAjustes } = splitCarryOver(Number(renovForm.necesita), Math.min(Number(renovForm.saldoAplicado), saldoAFavorActivo));
     if (renovForm.necesita <= 0) { toast.error('Indicá cuántas viandas necesita para el período'); return; }
+    const pendientesIds = sumarPendientes ? creditosPendientes.map(n => n.id) : [];
+    const ajustes = sumarPendientes ? viandasPendientes : 0;
+    const comprar = Math.max(comprarSinAjustes - ajustes, 0);
     const notaSaldo = aplicar > 0
       ? `[${todayLabelAR()}] Saldo anterior aplicado: ${aplicar} vianda(s) del contrato ${formatDateAR(plan.fechaInicio)}–${formatDateAR(plan.fechaFin)}.`
       : '';
     try {
-      await renovarPlan(
+      const nuevo = await renovarPlan(
         client.id,
         {
           clientId: client.id,
@@ -212,6 +229,14 @@ export default function ClientDetail() {
         },
         getRenovacionPuntos()
       );
+      if (pendientesIds.length > 0) {
+        try {
+          await assignPendingManualCredits(pendientesIds, nuevo.id, 'sumado al renovar');
+        } catch (err) {
+          console.error(err);
+          toast.error('El plan se renovó, pero no se pudieron sumar los ajustes pendientes. Sumalos desde "Ajustes y saldo a favor".');
+        }
+      }
       toast.success(`Plan renovado. +${getRenovacionPuntos()} puntos asignados`);
       setRenovando(false);
       await load();
@@ -258,7 +283,9 @@ export default function ClientDetail() {
     : plan?.fechaFin || '';
 
   const totalEditado = calcularTotalContrato(planEdit.cantidadContratada, planEdit.precioUnitario);
-  const renovSplit = splitCarryOver(renovForm.necesita, Math.min(renovForm.saldoAplicado, saldoAFavorActivo));
+  const renovBase = splitCarryOver(renovForm.necesita, Math.min(renovForm.saldoAplicado, saldoAFavorActivo));
+  const ajustesRenov = sumarPendientes ? viandasPendientes : 0;
+  const renovSplit = { aplicar: renovBase.aplicar, comprar: Math.max(renovBase.comprar - ajustesRenov, 0) };
   const totalRenov = calcularTotalContrato(renovSplit.comprar, renovForm.precioUnitario);
 
   const handleCopyLink = async () => { await navigator.clipboard.writeText(accessUrl); toast.success('Link copiado'); };
@@ -297,220 +324,9 @@ export default function ClientDetail() {
         <p className="page-subtitle">{client.email} · {client.telefono}</p>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4 mb-6">
-        {/* Resumen del contrato */}
-        <div className="glass-card p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold">Contrato activo</h3>
-            {plan && !editingPlan && !renovando && (
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={openRenovar}>
-                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Renovar
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setEditingPlan(true)}>
-                  <Edit2 className="w-3.5 h-3.5 mr-1.5" />Editar
-                </Button>
-              </div>
-            )}
-            {editingPlan && (
-              <div className="flex gap-2">
-                <Button size="sm" onClick={handleSavePlan}><Check className="w-3.5 h-3.5 mr-1.5" />Guardar</Button>
-                <Button size="sm" variant="outline" onClick={() => setEditingPlan(false)}><X className="w-3.5 h-3.5" /></Button>
-              </div>
-            )}
-          </div>
-
-          {plan ? (
-            editingPlan ? (
-              /* FORMULARIO DE EDICIÓN */
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <Label className="text-xs">Cantidad contratada</Label>
-                    <Input type="number" value={planEdit.cantidadContratada} onChange={e => setPlanEdit({ ...planEdit, cantidadContratada: Number(e.target.value) })} className="h-8 text-sm" />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Ajuste inicial usado</Label>
-                    <Input type="number" value={planEdit.ajusteInicialUsadas} onChange={e => setPlanEdit({ ...planEdit, ajusteInicialUsadas: Number(e.target.value) })} className="h-8 text-sm" />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Precio por vianda</Label>
-                    <Input type="number" value={planEdit.precioUnitario} onChange={e => setPlanEdit({ ...planEdit, precioUnitario: Number(e.target.value) })} className="h-8 text-sm" />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Total calculado</Label>
-                    <Input value={formatCurrencyAR(totalEditado)} readOnly className="h-8 text-sm bg-muted" />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Viandas por retiro</Label>
-                    <Input type="number" value={planEdit.unidadesPorRetiro} onChange={e => setPlanEdit({ ...planEdit, unidadesPorRetiro: Number(e.target.value) })} className="h-8 text-sm" />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Modalidad</Label>
-                    <select className="w-full h-8 rounded-md border border-input bg-background px-2 text-sm" value={planEdit.modalidad} onChange={e => setPlanEdit({ ...planEdit, modalidad: e.target.value as 'fijo' | 'flexible' })}>
-                      <option value="fijo">Fijo</option>
-                      <option value="flexible">Flexible</option>
-                    </select>
-                  </div>
-                  <div>
-                    <Label className="text-xs">Tipo de entrega</Label>
-                    <select className="w-full h-8 rounded-md border border-input bg-background px-2 text-sm" value={planEdit.tipoEntrega} onChange={e => setPlanEdit({ ...planEdit, tipoEntrega: e.target.value as 'retiro' | 'envio' })}>
-                      <option value="retiro">Retiro</option>
-                      <option value="envio">Envío</option>
-                    </select>
-                  </div>
-                  {planEdit.tipoEntrega === 'envio' && (
-                    <div>
-                      <Label className="text-xs">Costo de envío ($)</Label>
-                      <Input type="number" min={0} value={planEdit.costoEnvio} onChange={e => setPlanEdit({ ...planEdit, costoEnvio: Number(e.target.value) })} className="h-8 text-sm" placeholder="Ej: 3500" />
-                    </div>
-                  )}
-                  <div>
-                    <Label className="text-xs">Fecha inicio</Label>
-                    <Input type="date" value={planEdit.fechaInicio} onChange={e => setPlanEdit({ ...planEdit, fechaInicio: e.target.value })} className="h-8 text-sm" />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Fecha fin</Label>
-                    <Input type="date" value={planEdit.fechaFin} onChange={e => setPlanEdit({ ...planEdit, fechaFin: e.target.value })} className="h-8 text-sm" />
-                  </div>
-                </div>
-
-                {planEdit.modalidad === 'fijo' && (
-                  <div>
-                    <Label className="text-xs">Días de retiro</Label>
-                    <div className="flex flex-wrap gap-3 mt-1">
-                      {DAYS.map(day => (
-                        <label key={day.value} className="flex items-center gap-1.5 text-xs">
-                          <input type="checkbox" checked={planEdit.diasFijos.includes(day.value)}
-                            onChange={() => setPlanEdit(prev => ({
-                              ...prev,
-                              diasFijos: prev.diasFijos.includes(day.value)
-                                ? prev.diasFijos.filter(d => d !== day.value)
-                                : [...prev.diasFijos, day.value]
-                            }))} />
-                          {day.label}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {planEdit.modalidad === 'flexible' && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label className="text-xs">Cantidad semanal</Label>
-                      <Input type="number" value={planEdit.cantidadSemanal} onChange={e => setPlanEdit({ ...planEdit, cantidadSemanal: Number(e.target.value) })} className="h-8 text-sm" />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Hora límite</Label>
-                      <Input type="time" value={planEdit.horaLimite} onChange={e => setPlanEdit({ ...planEdit, horaLimite: e.target.value })} className="h-8 text-sm" />
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <Label className="text-xs">Observaciones</Label>
-                  <Textarea value={planEdit.observaciones} onChange={e => setPlanEdit({ ...planEdit, observaciones: e.target.value })} className="text-sm min-h-[60px]" />
-                </div>
-              </div>
-            ) : (
-              /* VISTA NORMAL */
-              <>
-                <div className="flex flex-wrap gap-2">
-                  <Badge variant="secondary">{plan.modalidad}</Badge>
-                  <Badge variant="outline">{plan.tipoEntrega}</Badge>
-                  <Badge variant="outline">{plan.unidadesPorRetiro} por retiro</Badge>
-                </div>
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div><span className="text-muted-foreground">Contratadas:</span> <strong>{plan.cantidadContratada}</strong></div>
-                  {(plan.saldoAnteriorAplicado || 0) > 0 && (
-                    <div><span className="text-muted-foreground">Saldo anterior aplicado:</span> <strong>{plan.saldoAnteriorAplicado}</strong></div>
-                  )}
-                  <div><span className="text-muted-foreground">Usadas:</span> <strong>{usadas}</strong></div>
-                  <div><span className="text-muted-foreground">Disponibles:</span> <strong>{disponibles}</strong></div>
-                  <div><span className="text-muted-foreground">Puntos:</span> <strong>{client.puntos}</strong></div>
-                  <div><span className="text-muted-foreground">Precio unitario:</span> <strong>{formatCurrencyAR(plan.precioUnitario)}</strong></div>
-                  {plan.tipoEntrega === 'envio' && (
-                    <div><span className="text-muted-foreground">Costo de envío:</span> <strong>{plan.costoEnvio ? formatCurrencyAR(plan.costoEnvio) : 'No definido'}</strong></div>
-                  )}
-                  <div className="col-span-2">
-                    {(() => {
-                      const pendingNotes = creditNotes.filter(n => !n.aplicado);
-                      const descuentoMoneda = pendingNotes
-                        .filter(n => n.tipo === 'saldo_envio' || n.tipo === 'descuento')
-                        .reduce((acc, n) => acc + (n.monto || 0), 0);
-                      const descuentoViandas = pendingNotes
-                        .filter(n => n.tipo === 'vianda_favor')
-                        .reduce((acc, n) => acc + (n.cantidad || 0) * plan.precioUnitario, 0);
-                      const totalAjustes = descuentoMoneda + descuentoViandas;
-                      const envio = plan.tipoEntrega === 'envio' ? (plan.costoEnvio || 0) : 0;
-                      const totalNeto = plan.totalCalculado + envio - totalAjustes;
-
-                      if (totalAjustes > 0) {
-                        return (
-                          <div className="rounded-lg bg-muted/40 border border-border px-3 py-2 space-y-1 text-sm">
-                            <div className="flex justify-between text-muted-foreground">
-                              <span>Viandas ({plan.cantidadContratada} × {formatCurrencyAR(plan.precioUnitario)})</span>
-                              <span>{formatCurrencyAR(plan.totalCalculado)}</span>
-                            </div>
-                            {envio > 0 && (
-                              <div className="flex justify-between text-muted-foreground">
-                                <span>Envío</span>
-                                <span>{formatCurrencyAR(envio)}</span>
-                              </div>
-                            )}
-                            <div className="flex justify-between text-green-700">
-                              <span>Ajustes a favor ({pendingNotes.length})</span>
-                              <span>− {formatCurrencyAR(totalAjustes)}</span>
-                            </div>
-                            <div className="flex justify-between font-semibold border-t border-border pt-1 mt-1">
-                              <span>Total a pagar</span>
-                              <span>{formatCurrencyAR(totalNeto)}</span>
-                            </div>
-                          </div>
-                        );
-                      }
-                      return (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Total:</span>
-                          <strong>{formatCurrencyAR(plan.totalCalculado + envio)}</strong>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                  <div><span className="text-muted-foreground">Inicio:</span> <strong>{formatDateAR(plan.fechaInicio)}</strong></div>
-                  <div><span className="text-muted-foreground">Fin estimada:</span> <strong>{fechaEstimadaFin ? formatDateAR(fechaEstimadaFin) : '-'}</strong></div>
-                  <div><span className="text-muted-foreground">Días estimados:</span> <strong>{diasEstimados}</strong></div>
-                  <div><span className="text-muted-foreground">Viandas por día:</span> <strong>{plan.unidadesPorRetiro}</strong></div>
-                </div>
-                {plan.diasFijos?.length ? <p className="text-sm text-muted-foreground"><strong>Días fijos:</strong> {plan.diasFijos.join(', ')}</p> : null}
-                {plan.observaciones ? <p className="text-sm text-muted-foreground"><strong>Observaciones:</strong> {plan.observaciones}</p> : null}
-              </>
-            )
-          ) : (
-            <p className="text-sm text-muted-foreground">Sin contrato activo</p>
-          )}
-        </div>
-
-        {/* Acceso del cliente */}
-        <div className="glass-card p-5 space-y-4">
-          <h3 className="font-semibold">Acceso del cliente</h3>
-          <div><Label>Link público</Label><Input value={accessUrl} readOnly /></div>
-          <div className="flex flex-wrap gap-3">
-            <Button variant="outline" onClick={handleCopyLink}><Copy className="w-4 h-4 mr-2" />Copiar link</Button>
-            <Button onClick={handleWhatsApp}><Send className="w-4 h-4 mr-2" />Enviar por WhatsApp</Button>
-          </div>
-        </div>
-      </div>
-
-      {/* HISTORIAL DE PLANES — al tope, siempre visible */}
-      <div className="mb-6">
-        <ClientPlanHistory clientId={client.id} showAdmin={true} />
-      </div>
-
       {/* FORMULARIO DE RENOVACIÓN */}
       {renovando && (
-        <div className="glass-card p-5 mb-6 space-y-4 border-2 border-primary/30">
+        <div className="glass-card p-5 mb-5 space-y-4 border-2 border-primary/30">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-semibold">Renovar plan</h3>
@@ -523,28 +339,39 @@ export default function ClientDetail() {
 
           {saldoAFavorActivo > 0 && (
             <div className="rounded-lg bg-amber-500/10 text-amber-800 text-sm px-3 py-2">
-              <strong>Saldo a favor: {saldoAFavorActivo} vianda(s)</strong> sin consumir en el contrato actual.
-              Si necesita {renovForm.necesita || 0}, puede aplicar {renovSplit.aplicar} y comprar {renovSplit.comprar} nuevas.
+              <strong>Saldo a favor: {saldoAFavorActivo} vianda(s)</strong> sin consumir en el contrato actual
+              {(balanceActivo?.ajusteManual || 0) > 0 && ` (incluye ${balanceActivo?.ajusteManual} de ajustes manuales)`}.
+              Si necesita {renovForm.necesita || 0}, puede aplicar {renovSplit.aplicar}{ajustesRenov > 0 ? `, sumar ${ajustesRenov} de ajustes pendientes` : ''} y comprar {renovSplit.comprar} nuevas.
               Ajustá cuánto aplicar según lo que acordaste con el cliente.
             </div>
           )}
 
+          {viandasPendientes > 0 && (
+            <label className="flex items-start gap-3 rounded-lg border-2 border-warning/60 bg-warning/10 px-3 py-2 text-sm cursor-pointer">
+              <input type="checkbox" className="mt-1 h-5 w-5 accent-[hsl(var(--primary))]" checked={sumarPendientes} onChange={e => setSumarPendientes(e.target.checked)} />
+              <span>
+                <strong>Sumar {viandasPendientes} vianda(s) de ajustes manuales pendientes</strong> al nuevo contrato.
+                Se descuentan de las viandas a comprar y quedan registradas en el historial de cada ajuste.
+              </span>
+            </label>
+          )}
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div>
-              <Label className="text-xs">{saldoAFavorActivo > 0 ? 'Viandas que necesita' : 'Cantidad contratada'}</Label>
+              <Label className="text-xs">{saldoAFavorActivo > 0 || ajustesRenov > 0 ? 'Viandas que necesita' : 'Cantidad contratada'}</Label>
               <Input type="number" min={0} value={renovForm.necesita} onChange={e => setRenovForm({ ...renovForm, necesita: Number(e.target.value) })} className="h-8 text-sm" />
             </div>
             {saldoAFavorActivo > 0 && (
-              <>
-                <div>
-                  <Label className="text-xs">Saldo a favor a aplicar (máx. {saldoAFavorActivo})</Label>
-                  <Input type="number" min={0} max={saldoAFavorActivo} value={renovForm.saldoAplicado} onChange={e => setRenovForm({ ...renovForm, saldoAplicado: Math.max(0, Math.min(Number(e.target.value), saldoAFavorActivo)) })} className="h-8 text-sm" />
-                </div>
-                <div>
-                  <Label className="text-xs">Viandas nuevas a comprar</Label>
-                  <Input value={renovSplit.comprar} readOnly className="h-8 text-sm bg-muted" />
-                </div>
-              </>
+              <div>
+                <Label className="text-xs">Saldo a favor a aplicar (máx. {saldoAFavorActivo})</Label>
+                <Input type="number" min={0} max={saldoAFavorActivo} value={renovForm.saldoAplicado} onChange={e => setRenovForm({ ...renovForm, saldoAplicado: Math.max(0, Math.min(Number(e.target.value), saldoAFavorActivo)) })} className="h-8 text-sm" />
+              </div>
+            )}
+            {(saldoAFavorActivo > 0 || ajustesRenov > 0) && (
+              <div>
+                <Label className="text-xs">Viandas nuevas a comprar</Label>
+                <Input value={renovSplit.comprar} readOnly className="h-8 text-sm bg-muted" />
+              </div>
             )}
             <div>
               <Label className="text-xs">Precio por vianda</Label>
@@ -635,86 +462,302 @@ export default function ClientDetail() {
         </div>
       )}
 
-      {/* Fechas excluidas */}
-      {plan && (
-        <div className="glass-card p-5 mb-6 space-y-4">
-          <h3 className="font-semibold">Fechas excluidas para este cliente</h3>
-          <div className="flex gap-2">
-            <Input type="date" value={newExcludedDate} onChange={e => setNewExcludedDate(e.target.value)} />
-            <Button variant="outline" onClick={addExcludedDate}>Agregar fecha</Button>
+      {/* Ficha en dos columnas en pantallas anchas; en celular: contrato, consumos y ajustes, resto */}
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] xl:grid-rows-[auto_1fr]">
+        <div className="space-y-5 min-w-0 xl:col-start-2 xl:row-start-1">
+          {/* Resumen del contrato */}
+          <div className="glass-card p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold">Contrato activo</h3>
+              {plan && !editingPlan && !renovando && (
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={openRenovar}>
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Renovar
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setEditingPlan(true)}>
+                    <Edit2 className="w-3.5 h-3.5 mr-1.5" />Editar
+                  </Button>
+                </div>
+              )}
+              {editingPlan && (
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={handleSavePlan}><Check className="w-3.5 h-3.5 mr-1.5" />Guardar</Button>
+                  <Button size="sm" variant="outline" onClick={() => setEditingPlan(false)}><X className="w-3.5 h-3.5" /></Button>
+                </div>
+              )}
+            </div>
+
+            {plan ? (
+              editingPlan ? (
+                /* FORMULARIO DE EDICIÓN */
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs">Cantidad contratada</Label>
+                      <Input type="number" value={planEdit.cantidadContratada} onChange={e => setPlanEdit({ ...planEdit, cantidadContratada: Number(e.target.value) })} className="h-8 text-sm" />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Ajuste inicial usado</Label>
+                      <Input type="number" value={planEdit.ajusteInicialUsadas} onChange={e => setPlanEdit({ ...planEdit, ajusteInicialUsadas: Number(e.target.value) })} className="h-8 text-sm" />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Precio por vianda</Label>
+                      <Input type="number" value={planEdit.precioUnitario} onChange={e => setPlanEdit({ ...planEdit, precioUnitario: Number(e.target.value) })} className="h-8 text-sm" />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Total calculado</Label>
+                      <Input value={formatCurrencyAR(totalEditado)} readOnly className="h-8 text-sm bg-muted" />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Viandas por retiro</Label>
+                      <Input type="number" value={planEdit.unidadesPorRetiro} onChange={e => setPlanEdit({ ...planEdit, unidadesPorRetiro: Number(e.target.value) })} className="h-8 text-sm" />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Modalidad</Label>
+                      <select className="w-full h-8 rounded-md border border-input bg-background px-2 text-sm" value={planEdit.modalidad} onChange={e => setPlanEdit({ ...planEdit, modalidad: e.target.value as 'fijo' | 'flexible' })}>
+                        <option value="fijo">Fijo</option>
+                        <option value="flexible">Flexible</option>
+                      </select>
+                    </div>
+                    <div>
+                      <Label className="text-xs">Tipo de entrega</Label>
+                      <select className="w-full h-8 rounded-md border border-input bg-background px-2 text-sm" value={planEdit.tipoEntrega} onChange={e => setPlanEdit({ ...planEdit, tipoEntrega: e.target.value as 'retiro' | 'envio' })}>
+                        <option value="retiro">Retiro</option>
+                        <option value="envio">Envío</option>
+                      </select>
+                    </div>
+                    {planEdit.tipoEntrega === 'envio' && (
+                      <div>
+                        <Label className="text-xs">Costo de envío ($)</Label>
+                        <Input type="number" min={0} value={planEdit.costoEnvio} onChange={e => setPlanEdit({ ...planEdit, costoEnvio: Number(e.target.value) })} className="h-8 text-sm" placeholder="Ej: 3500" />
+                      </div>
+                    )}
+                    <div>
+                      <Label className="text-xs">Fecha inicio</Label>
+                      <Input type="date" value={planEdit.fechaInicio} onChange={e => setPlanEdit({ ...planEdit, fechaInicio: e.target.value })} className="h-8 text-sm" />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Fecha fin</Label>
+                      <Input type="date" value={planEdit.fechaFin} onChange={e => setPlanEdit({ ...planEdit, fechaFin: e.target.value })} className="h-8 text-sm" />
+                    </div>
+                  </div>
+
+                  {planEdit.modalidad === 'fijo' && (
+                    <div>
+                      <Label className="text-xs">Días de retiro</Label>
+                      <div className="flex flex-wrap gap-3 mt-1">
+                        {DAYS.map(day => (
+                          <label key={day.value} className="flex items-center gap-1.5 text-xs">
+                            <input type="checkbox" checked={planEdit.diasFijos.includes(day.value)}
+                              onChange={() => setPlanEdit(prev => ({
+                                ...prev,
+                                diasFijos: prev.diasFijos.includes(day.value)
+                                  ? prev.diasFijos.filter(d => d !== day.value)
+                                  : [...prev.diasFijos, day.value]
+                              }))} />
+                            {day.label}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {planEdit.modalidad === 'flexible' && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-xs">Cantidad semanal</Label>
+                        <Input type="number" value={planEdit.cantidadSemanal} onChange={e => setPlanEdit({ ...planEdit, cantidadSemanal: Number(e.target.value) })} className="h-8 text-sm" />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Hora límite</Label>
+                        <Input type="time" value={planEdit.horaLimite} onChange={e => setPlanEdit({ ...planEdit, horaLimite: e.target.value })} className="h-8 text-sm" />
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <Label className="text-xs">Observaciones</Label>
+                    <Textarea value={planEdit.observaciones} onChange={e => setPlanEdit({ ...planEdit, observaciones: e.target.value })} className="text-sm min-h-[60px]" />
+                  </div>
+                </div>
+              ) : (
+                /* VISTA NORMAL */
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="secondary">{plan.modalidad}</Badge>
+                    <Badge variant="outline">{plan.tipoEntrega}</Badge>
+                    <Badge variant="outline">{plan.unidadesPorRetiro} por retiro</Badge>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div><span className="text-muted-foreground">Contratadas:</span> <strong>{plan.cantidadContratada}</strong></div>
+                    {(plan.saldoAnteriorAplicado || 0) > 0 && (
+                      <div><span className="text-muted-foreground">Saldo trasladado:</span> <strong>{plan.saldoAnteriorAplicado}</strong></div>
+                    )}
+                    {(plan.ajusteManualFavor || 0) > 0 && (
+                      <div><span className="text-muted-foreground">Ajustes a favor:</span> <strong>{plan.ajusteManualFavor}</strong></div>
+                    )}
+                    <div><span className="text-muted-foreground">Usadas:</span> <strong>{usadas}</strong></div>
+                    <div><span className="text-muted-foreground">Disponibles:</span> <strong>{disponibles}</strong></div>
+                    <div><span className="text-muted-foreground">Puntos:</span> <strong>{client.puntos}</strong></div>
+                    <div><span className="text-muted-foreground">Precio unitario:</span> <strong>{formatCurrencyAR(plan.precioUnitario)}</strong></div>
+                    {plan.tipoEntrega === 'envio' && (
+                      <div><span className="text-muted-foreground">Costo de envío:</span> <strong>{plan.costoEnvio ? formatCurrencyAR(plan.costoEnvio) : 'No definido'}</strong></div>
+                    )}
+                    <div className="col-span-2">
+                      {(() => {
+                        // Solo ajustes en dinero: las viandas a favor ya suman al saldo de viandas
+                        const pendingNotes = creditNotes.filter(n => !n.aplicado && !n.anulado && (n.tipo === 'saldo_envio' || n.tipo === 'descuento'));
+                        const totalAjustes = pendingNotes.reduce((acc, n) => acc + (n.monto || 0), 0);
+                        const envio = plan.tipoEntrega === 'envio' ? (plan.costoEnvio || 0) : 0;
+                        const totalNeto = plan.totalCalculado + envio - totalAjustes;
+
+                        if (totalAjustes > 0) {
+                          return (
+                            <div className="rounded-lg bg-muted/40 border border-border px-3 py-2 space-y-1 text-sm">
+                              <div className="flex justify-between text-muted-foreground">
+                                <span>Viandas ({plan.cantidadContratada} × {formatCurrencyAR(plan.precioUnitario)})</span>
+                                <span>{formatCurrencyAR(plan.totalCalculado)}</span>
+                              </div>
+                              {envio > 0 && (
+                                <div className="flex justify-between text-muted-foreground">
+                                  <span>Envío</span>
+                                  <span>{formatCurrencyAR(envio)}</span>
+                                </div>
+                              )}
+                              <div className="flex justify-between text-green-700">
+                                <span>Ajustes a favor ({pendingNotes.length})</span>
+                                <span>− {formatCurrencyAR(totalAjustes)}</span>
+                              </div>
+                              <div className="flex justify-between font-semibold border-t border-border pt-1 mt-1">
+                                <span>Total a pagar</span>
+                                <span>{formatCurrencyAR(totalNeto)}</span>
+                              </div>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground">Total:</span>
+                            <strong>{formatCurrencyAR(plan.totalCalculado + envio)}</strong>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                    <div><span className="text-muted-foreground">Inicio:</span> <strong>{formatDateAR(plan.fechaInicio)}</strong></div>
+                    <div><span className="text-muted-foreground">Fin estimada:</span> <strong>{fechaEstimadaFin ? formatDateAR(fechaEstimadaFin) : '-'}</strong></div>
+                    <div><span className="text-muted-foreground">Días estimados:</span> <strong>{diasEstimados}</strong></div>
+                    <div><span className="text-muted-foreground">Viandas por día:</span> <strong>{plan.unidadesPorRetiro}</strong></div>
+                  </div>
+                  {plan.diasFijos?.length ? <p className="text-sm text-muted-foreground"><strong>Días fijos:</strong> {plan.diasFijos.join(', ')}</p> : null}
+                  {plan.observaciones ? <p className="text-sm text-muted-foreground"><strong>Observaciones:</strong> {plan.observaciones}</p> : null}
+                </>
+              )
+            ) : (
+              <p className="text-sm text-muted-foreground">Sin contrato activo</p>
+            )}
           </div>
-          {(plan.fechasExcluidas || []).length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {(plan.fechasExcluidas || []).map(date => (
-                <span key={date} className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs">
-                  {formatDateAR(date)}
-                  <button type="button" onClick={() => removeExcludedDate(date)}><X className="w-3 h-3" /></button>
-                </span>
-              ))}
+        </div>
+
+        <div className="space-y-5 min-w-0 xl:col-start-1 xl:row-start-1 xl:row-span-2">
+          {/* Consumos: carga mensual editable + historial por mes */}
+          <div className="mb-6 space-y-3">
+            <ClientConsumptionCalendar
+              client={client}
+              plans={clientPlans}
+              consumptions={consumptions}
+              onConsumptionsChange={next => { void refreshAfterConsumption(next); }}
+            />
+            <div className="flex items-center gap-2 pt-2">
+              <CalendarCheck className="w-4 h-4 text-muted-foreground" />
+              <h3 className="font-semibold">Historial por mes</h3>
+            </div>
+            <ClientMonthlyHistory key={historyKey} consumptions={consumptions} plans={clientPlans} />
+          </div>
+
+          {/* Ajustes y saldos a favor */}
+          <div>
+            <ClientCreditNotes clientId={client.id} plans={clientPlans} activePlan={plan} consumptions={consumptions} onChange={notes => { void refreshAfterCredits(notes); }} />
+          </div>
+
+          {/* Historial de contratos */}
+          <div>
+            <ClientPlanHistory key={historyKey} clientId={client.id} showAdmin={true} />
+          </div>
+        </div>
+
+        <div className="space-y-5 min-w-0 xl:col-start-2 xl:row-start-2 self-start">
+          {/* Fechas excluidas */}
+          {plan && (
+            <div className="glass-card p-5 space-y-4">
+              <h3 className="font-semibold">Fechas excluidas para este cliente</h3>
+              <div className="flex gap-2">
+                <Input type="date" value={newExcludedDate} onChange={e => setNewExcludedDate(e.target.value)} />
+                <Button variant="outline" onClick={addExcludedDate}>Agregar fecha</Button>
+              </div>
+              {(plan.fechasExcluidas || []).length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {(plan.fechasExcluidas || []).map(date => (
+                    <span key={date} className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs">
+                      {formatDateAR(date)}
+                      <button type="button" onClick={() => removeExcludedDate(date)}><X className="w-3 h-3" /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-        </div>
-      )}
 
-      {/* Consumos: carga mensual editable + historial por mes */}
-      <div className="mb-6 space-y-3">
-        <ClientConsumptionCalendar
-          client={client}
-          plans={clientPlans}
-          consumptions={consumptions}
-          onConsumptionsChange={next => { void refreshAfterConsumption(next); }}
-        />
-        <div className="flex items-center gap-2 pt-2">
-          <CalendarCheck className="w-4 h-4 text-muted-foreground" />
-          <h3 className="font-semibold">Historial por mes</h3>
-        </div>
-        <ClientMonthlyHistory key={historyKey} consumptions={consumptions} plans={clientPlans} />
-      </div>
-
-      {/* Ajustes y saldos a favor */}
-      <div className="mb-6">
-        <ClientCreditNotes clientId={client.id} onChange={setCreditNotes} />
-      </div>
-
-      {/* Historial de puntos — solo movimientos relevantes (sin consumos individuales) */}
-      <div className="glass-card p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold">Historial de puntos</h3>
-          <span className="text-sm font-semibold">{client.puntos} pts totales</span>
-        </div>
-        {(() => {
-          const puntosConsumidos = points.filter(p => p.motivo.startsWith('Consumo registrado'));
-          const puntosRelevantes = points.filter(p => !p.motivo.startsWith('Consumo registrado'));
-          const totalPorConsumos = puntosConsumidos.reduce((acc, p) => acc + p.puntos, 0);
-
-          return (
-            <div className="space-y-2">
-              {/* Resumen de puntos por consumos */}
-              {puntosConsumidos.length > 0 && (
-                <div className="flex items-center justify-between border-b border-border pb-2">
-                  <div>
-                    <p className="text-sm font-medium">Puntos por consumos ({puntosConsumidos.length} registros)</p>
-                    <p className="text-xs text-muted-foreground">Suma automática por cada retiro</p>
-                  </div>
-                  <Badge variant="default">+{totalPorConsumos}</Badge>
-                </div>
-              )}
-              {/* Movimientos relevantes: renovaciones, canjes, bonos, manuales */}
-              {puntosRelevantes.length === 0 && puntosConsumidos.length === 0 && (
-                <p className="text-sm text-muted-foreground">Sin movimientos de puntos.</p>
-              )}
-              {puntosRelevantes.map(point => (
-                <div key={point.id} className="flex items-center justify-between border-b border-border pb-2">
-                  <div>
-                    <p className="text-sm font-medium">{point.motivo}</p>
-                    <p className="text-xs text-muted-foreground">{formatTimestampDateAR(point.fecha)}</p>
-                  </div>
-                  <Badge variant={point.puntos >= 0 ? 'default' : 'destructive'}>{point.puntos >= 0 ? '+' : ''}{point.puntos}</Badge>
-                </div>
-              ))}
+          {/* Acceso del cliente */}
+          <div className="glass-card p-5 space-y-4">
+            <h3 className="font-semibold">Acceso del cliente</h3>
+            <div><Label>Link público</Label><Input value={accessUrl} readOnly /></div>
+            <div className="flex flex-wrap gap-3">
+              <Button variant="outline" onClick={handleCopyLink}><Copy className="w-4 h-4 mr-2" />Copiar link</Button>
+              <Button onClick={handleWhatsApp}><Send className="w-4 h-4 mr-2" />Enviar por WhatsApp</Button>
             </div>
-          );
-        })()}
+          </div>
+
+          {/* Historial de puntos — solo movimientos relevantes (sin consumos individuales) */}
+          <div className="glass-card p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold">Historial de puntos</h3>
+              <span className="text-sm font-semibold">{client.puntos} pts totales</span>
+            </div>
+            {(() => {
+              const puntosConsumidos = points.filter(p => p.motivo.startsWith('Consumo registrado'));
+              const puntosRelevantes = points.filter(p => !p.motivo.startsWith('Consumo registrado'));
+              const totalPorConsumos = puntosConsumidos.reduce((acc, p) => acc + p.puntos, 0);
+
+              return (
+                <div className="space-y-2">
+                  {/* Resumen de puntos por consumos */}
+                  {puntosConsumidos.length > 0 && (
+                    <div className="flex items-center justify-between border-b border-border pb-2">
+                      <div>
+                        <p className="text-sm font-medium">Puntos por consumos ({puntosConsumidos.length} registros)</p>
+                        <p className="text-xs text-muted-foreground">Suma automática por cada retiro</p>
+                      </div>
+                      <Badge variant="default">+{totalPorConsumos}</Badge>
+                    </div>
+                  )}
+                  {/* Movimientos relevantes: renovaciones, canjes, bonos, manuales */}
+                  {puntosRelevantes.length === 0 && puntosConsumidos.length === 0 && (
+                    <p className="text-sm text-muted-foreground">Sin movimientos de puntos.</p>
+                  )}
+                  {puntosRelevantes.map(point => (
+                    <div key={point.id} className="flex items-center justify-between border-b border-border pb-2">
+                      <div>
+                        <p className="text-sm font-medium">{point.motivo}</p>
+                        <p className="text-xs text-muted-foreground">{formatTimestampDateAR(point.fecha)}</p>
+                      </div>
+                      <Badge variant={point.puntos >= 0 ? 'default' : 'destructive'}>{point.puntos >= 0 ? '+' : ''}{point.puntos}</Badge>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
       </div>
     </div>
   );

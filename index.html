@@ -37,6 +37,15 @@
     <meta name="twitter:image" content="https://flow-prana-viandas.vercel.app/og-image.png" />
   </head>
   <body>
+    <script>
+      // Panel admin en tema oscuro desde el primer instante (sin destello blanco)
+      try {
+        if (location.pathname.indexOf('/admin') === 0) {
+          document.documentElement.classList.add('admin-ui');
+          if (localStorage.getItem('mp_admin_theme') !== 'light') document.documentElement.classList.add('dark');
+        }
+      } catch (e) {}
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

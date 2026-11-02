@@ -154,9 +154,11 @@ export interface PlanBalance {
   compradas: number;
   /** Saldo de un contrato anterior aplicado a este. */
   saldoAnteriorAplicado: number;
+  /** Viandas a favor cargadas a mano y asignadas a este contrato. */
+  ajusteManual: number;
   ajusteInicial: number;
   consumidas: number;
-  /** compradas + aplicado − ajuste − consumidas (puede ser negativo). */
+  /** compradas + aplicado + ajustes manuales − ajuste inicial − consumidas (puede ser negativo). */
   restante: number;
   /** Lo que ya se trasladó desde este contrato al siguiente. */
   trasladado: number;
@@ -179,11 +181,12 @@ export function computePlanBalance(
 ): PlanBalance {
   const compradas = plan.cantidadContratada || 0;
   const saldoAnteriorAplicado = plan.saldoAnteriorAplicado || 0;
+  const ajusteManual = plan.ajusteManualFavor || 0;
   const ajusteInicial = plan.ajusteInicialUsadas || 0;
   const consumidas = clientConsumptions
     .filter(c => c.planId === plan.id && isConsumed(c.status))
     .reduce((acc, c) => acc + (c.cantidad || 0), 0);
-  const restante = compradas + saldoAnteriorAplicado - ajusteInicial - consumidas;
+  const restante = compradas + saldoAnteriorAplicado + ajusteManual - ajusteInicial - consumidas;
   const trasladado = clientPlans
     .filter(p => p.saldoOrigenPlanId === plan.id)
     .reduce((acc, p) => acc + (p.saldoAnteriorAplicado || 0), 0);
@@ -193,6 +196,7 @@ export function computePlanBalance(
   return {
     compradas,
     saldoAnteriorAplicado,
+    ajusteManual,
     ajusteInicial,
     consumidas,
     restante,

@@ -142,4 +142,24 @@ suite('integración con Supabase (cliente de prueba)', () => {
     await store2.deleteCreditNote(nueva.id);
     expect(await store2.getCreditNotes(clientId)).toHaveLength(1);
   }, 30000);
+
+  it('viandas a favor manuales: suman al contrato, se corrigen y se anulan con historial', async () => {
+    const antes = (await balance(noviembre)).disponible;
+    const n = await store.saveCreditNote({ clientId, tipo: 'vianda_favor', descripcion: 'Prueba manual', cantidad: 3, planId: noviembre.id });
+    expect((await store.loadPlans()).find(p => p.id === noviembre.id)!.ajusteManualFavor).toBe(3);
+    expect((await balance(noviembre)).disponible).toBe(antes + 3);
+
+    const c = await store.updateManualCredit(n.id, { cantidad: 2 }, 'prueba de corrección');
+    expect(c.historial.map(h => h.accion)).toEqual(['creado', 'corregido']);
+    expect((await balance(noviembre)).disponible).toBe(antes + 2);
+
+    const a = await store.anularCreditNote(n.id, 'prueba de anulación');
+    expect(a.anulado).toBe(true);
+    expect((await balance(noviembre)).disponible).toBe(antes);
+    // Pendiente (sin contrato): no suma hasta asignarlo; asignarlo dos veces no duplica
+    const p = await store.saveCreditNote({ clientId, tipo: 'vianda_favor', descripcion: 'Pendiente', cantidad: 1 });
+    expect((await balance(noviembre)).disponible).toBe(antes);
+    expect(await store.assignPendingManualCredits([p.id, p.id], noviembre.id, 'prueba')).toBe(1);
+    expect((await balance(noviembre)).disponible).toBe(antes + 1);
+  }, 60000);
 });

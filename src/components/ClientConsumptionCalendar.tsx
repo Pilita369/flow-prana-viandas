@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent } from '@/components/ui/popover';
 import ConsumptionCellEditor from '@/components/ConsumptionCellEditor';
-import { ConsumptionLegend, DayMarks, SaveIndicator, dayStatusClass, dayTitle, dayToneClass, describeDay } from '@/components/ConsumptionShared';
+import { ConsumptionLegend, DayMarks, SaveIndicator, TODAY_CLASS, dayStatusClass, dayTitle, dayToneClass, describeDay } from '@/components/ConsumptionShared';
 import { cellKey, useConsumptionSaver } from '@/hooks/useConsumptionSaver';
 import { formatDateAR, getBusinessConfig } from '@/lib/business';
 import {
@@ -107,27 +107,27 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
   const editingPlan = editing ? plans.find(p => p.id === editingRows[0]?.planId) || resolvePlanForDate(plans, editing) : undefined;
 
   return (
-    <div className="glass-card p-4 space-y-3">
+    <div className="glass-card p-4 sm:p-5 space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 className="font-semibold">Cargar consumos</h3>
-          <p className="text-xs text-muted-foreground">Tocá una fecha y elegí cuántas viandas consumió. Se guarda solo.</p>
+          <h3 className="text-lg font-semibold">Cargar consumos</h3>
+          <p className="text-sm text-muted-foreground">Tocá una fecha y elegí cuántas viandas consumió. Se guarda solo.</p>
         </div>
         <SaveIndicator saving={saver.savingCount} errors={saver.errorCount} lastSavedAt={saver.lastSavedAt} onRetryAll={saver.retryAll} />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="icon" className="h-10 w-10" onClick={() => setMes(m => shiftMonth(m, -1))} aria-label="Mes anterior">
-          <ChevronLeft className="w-4 h-4" />
+        <Button variant="outline" size="icon" className="h-11 w-11" onClick={() => setMes(m => shiftMonth(m, -1))} aria-label="Mes anterior">
+          <ChevronLeft className="w-5 h-5" />
         </Button>
-        <span className="min-w-[9.5rem] text-center font-semibold">{monthLabel}</span>
-        <Button variant="outline" size="icon" className="h-10 w-10" onClick={() => setMes(m => shiftMonth(m, 1))} aria-label="Mes siguiente">
-          <ChevronRight className="w-4 h-4" />
+        <span className="min-w-[10rem] text-center text-lg font-semibold">{monthLabel}</span>
+        <Button variant="outline" size="icon" className="h-11 w-11" onClick={() => setMes(m => shiftMonth(m, 1))} aria-label="Mes siguiente">
+          <ChevronRight className="w-5 h-5" />
         </Button>
         {mes !== today.slice(0, 7) && (
-          <Button variant="outline" className="h-10" onClick={() => setMes(today.slice(0, 7))}>Hoy</Button>
+          <Button variant="outline" className="h-11" onClick={() => setMes(today.slice(0, 7))}>Hoy</Button>
         )}
-        <Button asChild variant="ghost" size="sm" className="ml-auto h-10 text-xs">
+        <Button asChild variant="outline" size="sm" className="ml-auto h-11 text-sm">
           <Link to={`/admin/consumos?mes=${mes}`}><Table2 className="w-4 h-4 mr-1.5" />Ver en planilla general</Link>
         </Button>
       </div>
@@ -136,9 +136,9 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
         <p className="text-sm text-muted-foreground py-4">El cliente no tiene contratos: cargá un contrato para registrar consumos.</p>
       ) : (
         <>
-          <div ref={gridRef} className="grid grid-cols-7 gap-1 sm:gap-1.5" role="grid" aria-label={`Consumos de ${monthLabel}`}>
+          <div ref={gridRef} className="grid grid-cols-7 gap-1.5 sm:gap-2" role="grid" aria-label={`Consumos de ${monthLabel}`}>
             {WEEKDAYS.map(w => (
-              <div key={w} className={`text-center text-[11px] uppercase text-muted-foreground pb-0.5 ${w === 'Sá' || w === 'Do' ? 'opacity-70' : ''}`}>{w}</div>
+              <div key={w} className={`text-center text-xs font-semibold uppercase pb-0.5 ${w === 'Sá' || w === 'Do' ? 'text-muted-foreground' : 'text-foreground/90'}`}>{w}</div>
             ))}
             {Array.from({ length: leading }, (_, i) => <div key={`e${i}`} />)}
             {days.map((d, index) => {
@@ -157,14 +157,14 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
                   onKeyDown={e => onKeyDown(e, index, d, info.savedTotal, info.hasNotes)}
                   aria-label={`${formatDateAR(d)}: ${info.shown === null ? 'sin registro' : info.shown === 0 ? 'sin consumo' : `${info.shown} viandas`}`}
                   title={dayTitle(info, rows.length)}
-                  className={`relative h-14 sm:h-16 rounded-lg text-base tabular-nums transition-colors outline-none flex flex-col items-center justify-center
+                  className={`relative h-14 sm:h-[4.5rem] rounded-lg text-lg sm:text-xl tabular-nums transition-colors outline-none flex flex-col items-center justify-center
                     focus-visible:ring-2 focus-visible:ring-ring
-                    ${info.future ? 'cursor-default opacity-40' : 'hover:ring-1 hover:ring-primary/40'}
+                    ${info.future ? 'cursor-default opacity-35' : 'hover:bg-primary/10'}
                     ${dayToneClass(info)}
-                    ${isToday ? 'outline outline-2 outline-primary outline-offset-1' : ''}
+                    ${isToday ? TODAY_CLASS : ''}
                     ${dayStatusClass(st)}`}
                 >
-                  <span className={`absolute top-1 left-1.5 text-[10px] leading-none ${isToday ? 'text-primary font-bold' : 'text-muted-foreground font-normal'}`}>{dayNum}</span>
+                  <span className={`absolute top-1 left-1.5 text-xs leading-none ${isToday ? 'text-secondary font-bold' : 'text-muted-foreground font-medium'}`}>{dayNum}{isToday && <span className="hidden sm:inline"> hoy</span>}</span>
                   <span className="mt-2">{info.future ? '' : info.shown === null ? '–' : info.shown}</span>
                   <DayMarks d={info} st={st} />
                 </button>
@@ -175,9 +175,10 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
           <ConsumptionLegend keyboardHint={false} />
 
           {plan && balance ? (
-            <div className="grid grid-cols-4 gap-1.5 text-center text-sm">
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 text-center">
               <MiniStat label="Compradas" value={balance.compradas} />
-              <MiniStat label="Saldo anterior" value={balance.saldoAnteriorAplicado} />
+              <MiniStat label="Saldo trasladado" value={balance.saldoAnteriorAplicado} />
+              <MiniStat label="Ajustes a favor" value={balance.ajusteManual} />
               <MiniStat label="Consumidas (mes)" value={consumidasMes} cls="bg-green-500/10 text-green-700" />
               <MiniStat label="Disponible" value={balance.disponible} cls={balance.disponible < 0 ? 'bg-destructive/10 text-destructive' : 'bg-blue-500/10 text-blue-700'} />
             </div>
@@ -185,7 +186,7 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
             <p className="text-xs text-muted-foreground">Sin contrato en este mes · {consumidasMes} consumidas</p>
           )}
           {balance && balance.excedido > 0 && (
-            <p className="text-xs rounded bg-destructive/10 text-destructive px-2 py-1.5">
+            <p className="text-sm rounded bg-destructive/10 text-destructive px-3 py-2">
               Se registraron {balance.excedido} vianda(s) más de las disponibles. No se modificaron pagos ni contratos.
             </p>
           )}
@@ -219,9 +220,9 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
 
 function MiniStat({ label, value, cls = 'bg-muted/50' }: { label: string; value: number; cls?: string }) {
   return (
-    <div className={`rounded p-1.5 ${cls}`}>
-      <p className="text-[10px] leading-tight text-muted-foreground">{label}</p>
-      <p className="font-semibold tabular-nums">{value}</p>
+    <div className={`rounded-lg border border-border p-2 ${cls}`}>
+      <p className="text-xs leading-tight text-muted-foreground">{label}</p>
+      <p className="text-lg font-bold tabular-nums">{value}</p>
     </div>
   );
 }

@@ -175,11 +175,19 @@ export default function DailyConsumptions() {
   useRefreshOnReturn(() => { void refresh(); }, !loading && !saver.busy);
 
   // ---------- scroll al día de hoy ----------
+  // Posición de "hoy" medida dentro de la tabla (no desde el borde de la página), dejando dos días antes a la vista
+  const todayScrollLeft = () => {
+    const sc = scrollRef.current;
+    const el = sc?.querySelector<HTMLElement>('[data-today="true"]');
+    if (!sc || !el) return 0;
+    const nameCol = sc.querySelector<HTMLElement>('[data-namecol="true"]');
+    const left = el.getBoundingClientRect().left - sc.getBoundingClientRect().left + sc.scrollLeft;
+    return Math.max(left - (nameCol?.offsetWidth || 0) - el.offsetWidth * 2, 0);
+  };
+
   useEffect(() => {
     if (loading || !scrollRef.current) return;
-    const el = scrollRef.current.querySelector<HTMLElement>('[data-today="true"]');
-    const nameCol = scrollRef.current.querySelector<HTMLElement>('[data-namecol="true"]');
-    scrollRef.current.scrollLeft = el ? Math.max(el.offsetLeft - (nameCol?.offsetWidth || 0) - el.offsetWidth * 2, 0) : 0;
+    scrollRef.current.scrollLeft = todayScrollLeft();
   }, [loading, mes]);
 
   // ---------- navegación con teclado ----------
@@ -234,9 +242,7 @@ export default function DailyConsumptions() {
         </div>
         <Button variant={mes === today.slice(0, 7) ? 'secondary' : 'outline'} className="h-10" onClick={() => {
           if (mes === today.slice(0, 7)) {
-            const el = scrollRef.current?.querySelector<HTMLElement>('[data-today="true"]');
-            const nameCol = scrollRef.current?.querySelector<HTMLElement>('[data-namecol="true"]');
-            if (el && scrollRef.current) scrollRef.current.scrollTo({ left: Math.max(el.offsetLeft - (nameCol?.offsetWidth || 0) - el.offsetWidth * 2, 0), behavior: 'smooth' });
+            scrollRef.current?.scrollTo({ left: todayScrollLeft(), behavior: 'smooth' });
           } else setParams({});
         }}>Hoy</Button>
         <div className="relative flex-1 min-w-[10rem] max-w-xs">
@@ -260,7 +266,7 @@ export default function DailyConsumptions() {
             <table className="border-separate border-spacing-0 text-sm">
               <thead>
                 <tr>
-                  <th data-namecol="true" className="sticky left-0 top-0 z-30 bg-card border-b border-r border-border text-left px-2 py-2 font-semibold w-[8.5rem] min-w-[8.5rem] md:w-[13rem] md:min-w-[13rem]">
+                  <th data-namecol="true" className="sticky left-0 top-0 z-30 bg-card border-b-2 border-r-2 border-border text-left px-2 py-2 font-semibold w-[8.5rem] min-w-[8.5rem] md:w-[13rem] md:min-w-[13rem]">
                     Cliente
                   </th>
                   {days.map(d => {
@@ -273,13 +279,13 @@ export default function DailyConsumptions() {
                         key={d}
                         data-today={isToday ? 'true' : undefined}
                         title={feriado ? 'Feriado' : undefined}
-                        className={`sticky top-0 z-20 border-b border-border px-0.5 py-1 font-normal text-center min-w-[2.9rem]
-                          ${isToday ? 'bg-primary text-primary-foreground' : feriado ? 'bg-amber-100 text-amber-900' : 'bg-card'}
+                        className={`sticky top-0 z-20 border-b-2 border-r border-border px-0.5 py-1 font-normal text-center min-w-[2.9rem]
+                          ${isToday ? 'bg-secondary text-secondary-foreground' : feriado ? 'bg-amber-100 text-amber-900' : 'bg-card'}
                           ${weekend && !isToday ? 'text-muted-foreground/70' : ''}`}
                       >
-                        <div className="text-[10px] uppercase leading-none">{DAY_ABBR[date.getDay()]}</div>
+                        <div className="text-[11px] uppercase leading-none">{DAY_ABBR[date.getDay()]}</div>
                         <div className="text-sm font-semibold leading-tight tabular-nums">{date.getDate()}</div>
-                        <div className="text-[9px] leading-none h-2.5">{isToday ? 'hoy' : feriado ? 'feriado' : ''}</div>
+                        <div className="text-[10px] font-semibold leading-none h-2.5">{isToday ? 'hoy' : feriado ? 'feriado' : ''}</div>
                       </th>
                     );
                   })}
@@ -295,11 +301,11 @@ export default function DailyConsumptions() {
                   const disp = sum?.balance?.disponible;
                   return (
                     <tr key={client.id}>
-                      <th scope="row" className="sticky left-0 z-10 bg-card border-b border-r border-border text-left px-2 py-1 font-normal w-[8.5rem] min-w-[8.5rem] md:w-[13rem] md:min-w-[13rem]">
+                      <th scope="row" className="sticky left-0 z-10 bg-card border-b border-r-2 border-border text-left px-2 py-1 font-normal w-[8.5rem] min-w-[8.5rem] md:w-[13rem] md:min-w-[13rem]">
                         <Link to={`/admin/clientes/${client.id}`} className="block text-sm font-medium leading-tight truncate hover:underline">
                           {fullName(client)}
                         </Link>
-                        <span className={`text-[11px] leading-tight ${disp !== undefined && disp < 0 ? 'text-destructive font-semibold' : 'text-muted-foreground'}`}>
+                        <span className={`text-xs leading-tight ${disp !== undefined && disp < 0 ? 'text-destructive font-semibold' : 'text-muted-foreground'}`}>
                           {cp.length === 0 ? 'Sin contrato' : disp === undefined ? 'Sin contrato este mes' : `Saldo ${disp}`}
                           {sum?.plan && <span className="hidden md:inline"> · hab. {sum.plan.unidadesPorRetiro || 1}</span>}
                         </span>
@@ -314,7 +320,7 @@ export default function DailyConsumptions() {
                         const isToday = d === today;
 
                         return (
-                          <td key={d} className={`border-b border-border p-0.5 text-center ${isToday ? 'bg-primary/5' : ''}`}>
+                          <td key={d} className={`border-b border-r border-border p-0.5 text-center ${isToday ? 'bg-secondary/10' : ''}`}>
                             <button
                               type="button"
                               data-cell={`${r}:${c}`}
@@ -421,9 +427,10 @@ function SummaryCard({ client, summary, onApply }: {
       </div>
 
       {plan && b ? (
-        <div className="grid grid-cols-4 gap-1.5 text-center">
+        <div className="grid grid-cols-5 gap-1.5 text-center">
           <Stat label="Compradas" value={b.compradas} />
-          <Stat label="Saldo anterior" value={b.saldoAnteriorAplicado} />
+          <Stat label="Trasladado" value={b.saldoAnteriorAplicado} />
+          <Stat label="Ajustes" value={b.ajusteManual} />
           <Stat label="Consumidas" value={consumidasMes} hint="en el mes" tone="green" />
           <Stat label="Disponible" value={b.disponible} tone={b.disponible < 0 ? 'red' : 'blue'} />
         </div>
@@ -469,10 +476,10 @@ function SummaryCard({ client, summary, onApply }: {
 function Stat({ label, value, hint, tone }: { label: string; value: number; hint?: string; tone?: 'green' | 'blue' | 'red' }) {
   const toneCls = tone === 'green' ? 'bg-green-500/10 text-green-700' : tone === 'blue' ? 'bg-blue-500/10 text-blue-700' : tone === 'red' ? 'bg-destructive/10 text-destructive' : 'bg-muted/50';
   return (
-    <div className={`rounded p-1.5 ${toneCls}`}>
-      <p className="text-[10px] leading-tight text-muted-foreground">{label}</p>
-      <p className="font-semibold tabular-nums">{value}</p>
-      {hint && <p className="text-[9px] leading-none text-muted-foreground">{hint}</p>}
+    <div className={`rounded-lg border border-border p-1.5 ${toneCls}`}>
+      <p className="text-[11px] leading-tight text-muted-foreground">{label}</p>
+      <p className="text-base font-bold tabular-nums">{value}</p>
+      {hint && <p className="text-[10px] leading-none text-muted-foreground">{hint}</p>}
     </div>
   );
 }

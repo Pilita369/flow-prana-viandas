@@ -43,15 +43,19 @@ export function describeDay(params: {
   };
 }
 
-/** Colores de la casilla: sin registro (–), 0 sin consumo, N viandas. */
+/**
+ * Colores de la casilla, iguales en tema claro y oscuro:
+ * sin registro = solo borde; 0 = gris lleno; N viandas = verde con borde verde.
+ */
 export function dayToneClass(d: DayInfo): string {
-  let cls = 'text-muted-foreground/40';
-  if (d.shown === 0) cls = 'bg-muted text-muted-foreground';
-  else if (d.shown !== null && d.shown > 0) cls = 'bg-primary/15 text-primary font-semibold';
-  if ((d.excluida || d.feriado) && d.shown === null) cls += ' bg-amber-50';
-  if (d.habitualDay && d.shown === null && !d.future) cls += ' border border-dashed border-muted-foreground/30';
-  return cls;
+  if (d.shown === 0) return 'border-2 border-transparent bg-muted text-foreground';
+  if (d.shown !== null && d.shown > 0) return 'border-2 border-primary bg-primary/25 text-foreground font-bold';
+  const borde = d.habitualDay && !d.future ? 'border-dashed border-muted-foreground/70' : 'border-border';
+  return `border-2 ${borde} text-muted-foreground ${d.excluida || d.feriado ? 'bg-warning/10' : ''}`;
 }
+
+/** Marca del día actual: contorno ámbar, distinto del verde de "con consumo". */
+export const TODAY_CLASS = 'outline outline-[3px] outline-secondary outline-offset-2';
 
 export function dayStatusClass(st?: CellState): string {
   if (st?.status === 'saving') return 'animate-pulse';
@@ -64,8 +68,8 @@ export function dayStatusClass(st?: CellState): string {
 export function DayMarks({ d, st }: { d: DayInfo; st?: CellState }) {
   return (
     <>
-      {(d.excluida || d.feriado) && <span className="absolute top-0.5 left-0.5 w-1.5 h-1.5 rounded-full bg-amber-500" />}
-      {(d.hasNotes || d.multiple) && <span className="absolute top-0 right-0 w-0 h-0 border-t-[7px] border-l-[7px] border-t-secondary border-l-transparent rounded-tr-md" />}
+      {(d.excluida || d.feriado) && <span className="absolute bottom-1 left-1 w-2 h-2 rounded-full bg-warning" />}
+      {(d.hasNotes || d.multiple) && <span className="absolute top-0 right-0 w-0 h-0 border-t-[9px] border-l-[9px] border-t-secondary border-l-transparent rounded-tr-md" />}
       {st?.status === 'error' && <AlertCircle className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 text-destructive bg-card rounded-full" />}
     </>
   );
@@ -100,16 +104,17 @@ export function SaveIndicator({ saving, errors, lastSavedAt, onRetryAll }: { sav
 
 export function ConsumptionLegend({ keyboardHint = true }: { keyboardHint?: boolean }) {
   const item = (box: React.ReactNode, label: string) => (
-    <span className="inline-flex items-center gap-1.5">{box}<span>{label}</span></span>
+    <span className="inline-flex items-center gap-2">{box}<span>{label}</span></span>
   );
-  const box = 'inline-flex h-5 w-5 items-center justify-center rounded text-[11px] tabular-nums';
+  const box = 'relative inline-flex h-7 w-7 items-center justify-center rounded-md text-sm tabular-nums';
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground mb-3">
-      {item(<span className={`${box} text-muted-foreground/50 border border-border`}>–</span>, 'Sin registro')}
-      {item(<span className={`${box} bg-muted`}>0</span>, 'Sin consumo')}
-      {item(<span className={`${box} bg-primary/15 text-primary font-semibold`}>2</span>, 'Viandas consumidas')}
-      {item(<span className={`${box} border border-dashed border-muted-foreground/40`} />, 'Día habitual sin registro')}
-      {item(<span className={`${box} bg-amber-50 relative`}><span className="absolute top-0.5 left-0.5 w-1.5 h-1.5 rounded-full bg-amber-500" /></span>, 'Feriado o fecha excluida')}
+    <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-muted-foreground mb-3">
+      {item(<span className={`${box} border-2 border-border`}>–</span>, 'Sin registro')}
+      {item(<span className={`${box} bg-muted text-foreground`}>0</span>, 'Sin consumo')}
+      {item(<span className={`${box} border-2 border-primary bg-primary/25 text-foreground font-bold`}>2</span>, 'Con consumo')}
+      {item(<span className={`${box} border-2 border-border ${TODAY_CLASS}`} />, 'Hoy')}
+      {item(<span className={`${box} border-2 border-dashed border-muted-foreground/70`} />, 'Día habitual sin registro')}
+      {item(<span className={`${box} border-2 border-border bg-warning/10`}><span className="absolute bottom-1 left-1 w-2 h-2 rounded-full bg-warning" /></span>, 'Feriado o fecha excluida')}
       {keyboardHint && <span className="hidden md:inline">Con el teclado: número para guardar, Supr para quitar, flechas para moverte.</span>}
     </div>
   );

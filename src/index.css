@@ -53,42 +53,66 @@
     --info-foreground: 40 33% 97%;
   }
 
+  /* Tema oscuro del panel de administración (predeterminado en /admin). */
   .dark {
-    --background: 150 25% 8%;
-    --foreground: 40 20% 93%;
-    --card: 150 20% 12%;
-    --card-foreground: 40 20% 93%;
-    --popover: 150 20% 12%;
-    --popover-foreground: 40 20% 93%;
-    --primary: 152 45% 40%;
-    --primary-foreground: 40 33% 97%;
-    --secondary: 38 70% 55%;
-    --secondary-foreground: 40 33% 97%;
-    --muted: 150 15% 18%;
-    --muted-foreground: 40 15% 60%;
-    --accent: 38 70% 55%;
-    --accent-foreground: 40 33% 97%;
-    --destructive: 0 62% 30%;
-    --destructive-foreground: 40 33% 97%;
-    --border: 150 15% 22%;
-    --input: 150 15% 22%;
-    --ring: 152 45% 40%;
-    --sidebar-background: 150 25% 6%;
-    --sidebar-foreground: 40 20% 90%;
-    --sidebar-primary: 38 70% 55%;
-    --sidebar-primary-foreground: 40 33% 97%;
-    --sidebar-accent: 150 20% 12%;
-    --sidebar-accent-foreground: 40 20% 90%;
-    --sidebar-border: 150 15% 15%;
-    --sidebar-ring: 38 70% 55%;
-    --success: 152 55% 40%;
-    --success-foreground: 40 33% 97%;
-    --warning: 38 90% 50%;
-    --warning-foreground: 150 25% 12%;
-    --info: 200 60% 50%;
-    --info-foreground: 40 33% 97%;
+    --background: 150 16% 7%;
+    --foreground: 40 30% 95%;
+    --card: 150 13% 11%;
+    --card-foreground: 40 30% 95%;
+    --popover: 150 13% 14%;
+    --popover-foreground: 40 30% 95%;
+    /* Verde Mundo Prana, lo bastante claro para leerse como texto y con texto oscuro encima */
+    --primary: 152 50% 46%;
+    --primary-foreground: 150 45% 6%;
+    --secondary: 38 85% 60%;
+    --secondary-foreground: 30 40% 8%;
+    --muted: 150 9% 19%;
+    --muted-foreground: 40 12% 76%;
+    --accent: 38 85% 60%;
+    --accent-foreground: 30 40% 8%;
+    --destructive: 0 75% 62%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 150 9% 30%;
+    --input: 150 9% 36%;
+    --ring: 38 85% 60%;
+    --sidebar-background: 150 18% 5%;
+    --sidebar-foreground: 40 25% 92%;
+    --sidebar-primary: 152 55% 55%;
+    --sidebar-primary-foreground: 150 45% 6%;
+    --sidebar-accent: 150 14% 13%;
+    --sidebar-accent-foreground: 40 25% 95%;
+    --sidebar-border: 150 10% 18%;
+    --sidebar-ring: 38 85% 60%;
+    --success: 152 55% 52%;
+    --success-foreground: 150 45% 6%;
+    --warning: 38 90% 58%;
+    --warning-foreground: 30 40% 8%;
+    --info: 205 85% 68%;
+    --info-foreground: 210 40% 8%;
+    color-scheme: dark;
   }
 }
+
+/* Panel admin: letra un poco más grande y líneas más marcadas */
+html.admin-ui { font-size: 17px; }
+@media (max-width: 640px) { html.admin-ui { font-size: 16.5px; } }
+html.admin-ui table thead tr,
+html.admin-ui table tbody tr { border-bottom-width: 2px; }
+
+/* Colores pensados para fondo claro: versiones legibles sobre fondo oscuro */
+.dark .text-amber-600, .dark .text-amber-700, .dark .text-amber-800, .dark .text-amber-900, .dark .text-yellow-500 { color: hsl(40 95% 68%); }
+.dark .text-green-600, .dark .text-green-700 { color: hsl(145 60% 62%); }
+.dark .text-blue-600, .dark .text-blue-700 { color: hsl(205 90% 72%); }
+.dark .text-red-600, .dark .text-red-300 { color: hsl(0 85% 72%); }
+.dark .text-gray-400 { color: hsl(40 12% 76%); }
+.dark .bg-amber-50, .dark .bg-amber-50\/50, .dark .bg-amber-100 { background-color: hsl(38 70% 50% / 0.14); }
+.dark .bg-amber-500\/10, .dark .bg-amber-500\/15 { background-color: hsl(38 80% 55% / 0.16); }
+.dark .bg-green-500\/10 { background-color: hsl(145 55% 50% / 0.16); }
+.dark .bg-blue-500\/10 { background-color: hsl(205 80% 60% / 0.16); }
+.dark .bg-red-500\/10 { background-color: hsl(0 75% 60% / 0.16); }
+.dark .border-amber-200 { border-color: hsl(38 70% 55% / 0.5); }
+.dark input[type="date"]::-webkit-calendar-picker-indicator,
+.dark input[type="time"]::-webkit-calendar-picker-indicator { filter: invert(0.9); }
 
 @layer base {
   * {
@@ -106,7 +130,7 @@
 
 @layer components {
   .glass-card {
-    @apply bg-card/80 backdrop-blur-sm border border-border/50 rounded-xl shadow-sm;
+    @apply bg-card border border-border rounded-xl shadow-sm;
   }
   
   .stat-card {

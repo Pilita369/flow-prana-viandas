@@ -209,9 +209,10 @@ export default function ClientPlanHistory({ clientId, showAdmin = false }: Props
               )}
             </div>
 
-            {(balance.saldoAnteriorAplicado > 0 || balance.trasladado > 0 || balance.excedido > 0 || (balance.cerrado && balance.aFavorSinAplicar > 0) || balance.trasladadoDeMas > 0) && (
+            {(balance.saldoAnteriorAplicado > 0 || balance.ajusteManual > 0 || balance.trasladado > 0 || balance.excedido > 0 || (balance.cerrado && balance.aFavorSinAplicar > 0) || balance.trasladadoDeMas > 0) && (
               <div className="flex flex-wrap gap-1.5 text-xs">
-                {balance.saldoAnteriorAplicado > 0 && <span className="rounded-full bg-blue-500/10 text-blue-700 px-2 py-0.5">+{balance.saldoAnteriorAplicado} de saldo anterior</span>}
+                {balance.saldoAnteriorAplicado > 0 && <span className="rounded-full bg-blue-500/10 text-blue-700 px-2 py-0.5">+{balance.saldoAnteriorAplicado} de saldo trasladado</span>}
+                {balance.ajusteManual > 0 && <span className="rounded-full bg-green-500/10 text-green-700 px-2 py-0.5">+{balance.ajusteManual} de ajustes manuales</span>}
                 {balance.trasladado > 0 && <span className="rounded-full bg-muted px-2 py-0.5">{balance.trasladado} trasladadas al contrato siguiente</span>}
                 {balance.cerrado && balance.aFavorSinAplicar > 0 && <span className="rounded-full bg-amber-500/15 text-amber-800 px-2 py-0.5">{balance.aFavorSinAplicar} a favor sin aplicar</span>}
                 {balance.excedido > 0 && <span className="rounded-full bg-red-500/10 text-red-600 px-2 py-0.5">{balance.excedido} consumidas de más</span>}
