@@ -13,7 +13,7 @@ import ClientPeriodSummary from '@/components/client/ClientPeriodSummary';
 /** Inicio del cliente: el mes (días hábiles y precio) y un único resumen del período registrado. */
 export default function ClientHome() {
   const { accessLink } = useParams();
-  const { loading, client, plans, consumptions, creditNotes, activePlan: plan } = useClientData(accessLink);
+  const { loading, client, plans, consumptions, creditNotes, pagos, activePlan: plan } = useClientData(accessLink);
   const { feriados } = useFeriados({ soloLectura: true });
   const [orderCheck, setOrderCheck] = useState<{ can: boolean; reason?: string }>({ can: false });
 
@@ -46,7 +46,7 @@ export default function ClientHome() {
       <ClientMonthCard plans={plans} activePlan={plan} feriados={feriados} />
 
       {plan ? (
-        <ClientPeriodSummary plan={plan} plans={plans} consumptions={consumptions} creditNotes={creditNotes} />
+        <ClientPeriodSummary plan={plan} plans={plans} consumptions={consumptions} creditNotes={creditNotes} pagos={pagos} />
       ) : (
         <div className="glass-card p-6 text-center text-muted-foreground">No tenés un contrato activo. Escribinos para ayudarte.</div>
       )}

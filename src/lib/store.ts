@@ -16,6 +16,7 @@ import type {
 } from '@/types';
 import { calcularTotalContrato, getDayNameFromDate, isHoliday, isExcludedForClient } from '@/lib/business';
 import { addDaysISO, parseISODate, partsInAR, planDailySave, todayISO, todayLabelAR } from '@/lib/consumo';
+import { enTramos } from '@/lib/habiles';
 
 // ======================================================
 // HELPERS GENERALES
@@ -151,6 +152,9 @@ function rowToPlan(row: Record<string, unknown>): Plan {
     saldoAnteriorAplicado: Number(row.saldo_anterior_aplicado || 0),
     saldoOrigenPlanId: (row.saldo_origen_plan_id as string) || undefined,
     ajusteManualFavor: sumAjusteManual(row),
+    regimen: (row.regimen as Plan['regimen']) || undefined,
+    intervalos: Array.isArray(row.intervalos) ? (row.intervalos as Plan['intervalos']) : undefined,
+    cantidadSolicitada: row.cantidad_solicitada === null || row.cantidad_solicitada === undefined ? undefined : Number(row.cantidad_solicitada),
   };
 }
 
@@ -418,6 +422,9 @@ export async function createPlan(
     observaciones: data.observaciones || null,
     saldo_anterior_aplicado: data.saldoAnteriorAplicado || 0,
     saldo_origen_plan_id: data.saldoOrigenPlanId || null,
+    regimen: data.regimen || null,
+    intervalos: data.regimen === 'intervalos' && data.intervalos?.length ? data.intervalos : null,
+    cantidad_solicitada: data.cantidadSolicitada ?? null,
   };
 
   const { data: inserted, error } = await supabase
@@ -456,6 +463,9 @@ export async function updatePlan(id: string, data: Partial<Plan>): Promise<Plan 
   if (data.observaciones !== undefined) payload.observaciones = data.observaciones;
   if (data.saldoAnteriorAplicado !== undefined) payload.saldo_anterior_aplicado = data.saldoAnteriorAplicado;
   if (data.saldoOrigenPlanId !== undefined) payload.saldo_origen_plan_id = data.saldoOrigenPlanId || null;
+  if (data.regimen !== undefined) payload.regimen = data.regimen || null;
+  if (data.intervalos !== undefined) payload.intervalos = data.intervalos?.length ? data.intervalos : null;
+  if (data.cantidadSolicitada !== undefined) payload.cantidad_solicitada = data.cantidadSolicitada ?? null;
 
   if (data.cantidadContratada !== undefined || data.precioUnitario !== undefined) {
     const plans = await getPlans();
@@ -1298,6 +1308,7 @@ export async function getFixedClientsForToday(): Promise<{ client: Client; plan:
 
     if (!plan) continue;
     if (!plan.diasFijos?.includes(todayDayName)) continue;
+    if (!enTramos(plan, today)) continue; // fuera de sus intervalos de servicio
     if (isHoliday(today)) continue;
     if (isExcludedForClient(today, plan.fechasExcluidas)) continue;
     if ((await getDisponibles(plan)) <= 0) continue;

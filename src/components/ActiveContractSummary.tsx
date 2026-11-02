@@ -6,7 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { formatCurrencyAR, formatDateAR } from '@/lib/business';
 import { addDaysISO, computePlanBalance, todayISO } from '@/lib/consumo';
-import { estadoDePago, estimarCobertura, necesidadDelContrato, resumenWhatsApp } from '@/lib/contrato';
+import { estadoDePago, estimarCobertura, necesidadDelContrato, resumenWhatsApp, textoTramos } from '@/lib/contrato';
+import { tramosDelContrato } from '@/lib/habiles';
 import { anularPago, registrarPago, type PagoContrato } from '@/lib/pagos';
 import { ContractAdjustments, ContractCloseout, QuantityReview } from '@/components/ContractPeriodParts';
 import type { Client, Consumption, CreditNote, Plan } from '@/types';
@@ -105,9 +106,12 @@ export default function ActiveContractSummary({ client, plan, plans, consumption
         <ContractCloseout plan={plan} plans={plans} balance={balance} />
       ) : (
       <>
+      {plan.regimen === 'intervalos' && (
+        <p className="text-sm" data-testid="contrato-tramos"><span className="text-muted-foreground">Fechas de servicio: </span><strong>{textoTramos(tramosDelContrato(plan))}</strong></p>
+      )}
       <div className="grid grid-cols-2 gap-2">
-        <Dato label="Días de servicio" value={String(servicio.habiles)} />
-        <Dato label="Viandas necesarias" value={String(necesarias)} testId="contrato-necesarias" />
+        <Dato label="Días de servicio" value={String(servicio.habiles)} testId="contrato-dias" />
+        <Dato label={plan.regimen === 'manual' || plan.cantidadSolicitada !== undefined ? 'Viandas pedidas' : 'Viandas necesarias'} value={String(necesarias)} testId="contrato-necesarias" />
         <Dato label="Viandas compradas" value={String(plan.cantidadContratada)} testId="contrato-compradas" />
         <Dato label="Saldo anterior aplicado" value={String(plan.saldoAnteriorAplicado || 0)} testId="contrato-saldo" />
         {(plan.ajusteManualFavor || 0) > 0 && <Dato label="Ajustes a favor" value={String(plan.ajusteManualFavor)} />}

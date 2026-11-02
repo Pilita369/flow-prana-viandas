@@ -4,6 +4,7 @@
 import { AlertCircle, Check, Loader2 } from 'lucide-react';
 import { getDayNameFromDate } from '@/lib/business';
 import { dayTotal, formatTimeAR } from '@/lib/consumo';
+import { enTramos } from '@/lib/habiles';
 import type { CellState } from '@/hooks/useConsumptionSaver';
 import type { Consumption, Plan } from '@/types';
 
@@ -35,7 +36,7 @@ export function describeDay(params: {
   const excluida = !!plan?.fechasExcluidas?.includes(fecha);
   const dayName = getDayNameFromDate(fecha);
   const habitualDay = plan?.modalidad === 'fijo' && !!dayName && !!plan.diasFijos?.includes(dayName) && !feriado && !excluida
-    && plan.fechaInicio <= fecha && fecha <= plan.fechaFin;
+    && enTramos(plan, fecha);
   const notes = rows.map(x => x.notas?.trim()).filter(Boolean).join(' | ');
   return {
     savedTotal, shown, future: fecha > today, feriado, excluida, habitualDay,
@@ -50,7 +51,7 @@ export function describeDay(params: {
 export function dayToneClass(d: DayInfo): string {
   if (d.shown === 0) return 'border-2 border-transparent bg-muted text-foreground';
   if (d.shown !== null && d.shown > 0) return 'border-2 border-primary bg-primary/25 text-foreground font-bold';
-  const borde = d.habitualDay && !d.future ? 'border-dashed border-muted-foreground/70' : 'border-border';
+  const borde = d.habitualDay ? 'border-dashed border-muted-foreground/70' : 'border-border';
   return `border-2 ${borde} text-muted-foreground ${d.excluida || d.feriado ? 'bg-warning/10' : ''}`;
 }
 
@@ -113,7 +114,7 @@ export function ConsumptionLegend({ keyboardHint = true }: { keyboardHint?: bool
       {item(<span className={`${box} bg-muted text-foreground`}>0</span>, 'Sin consumo')}
       {item(<span className={`${box} border-2 border-primary bg-primary/25 text-foreground font-bold`}>2</span>, 'Con consumo')}
       {item(<span className={`${box} border-2 border-border ${TODAY_CLASS}`} />, 'Hoy')}
-      {item(<span className={`${box} border-2 border-dashed border-muted-foreground/70`} />, 'Día habitual sin registro')}
+      {item(<span className={`${box} border-2 border-dashed border-muted-foreground/70`} />, 'Día programado sin registro')}
       {item(<span className={`${box} border-2 border-border bg-warning/10`}><span className="absolute bottom-1 left-1 w-2 h-2 rounded-full bg-warning" /></span>, 'Feriado o fecha excluida')}
       {keyboardHint && <span className="hidden md:inline">Con el teclado: número para guardar, Supr para quitar, flechas para moverte.</span>}
     </div>

@@ -165,6 +165,8 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
       const nota = `[${todayLabelAR()}] Recalculado por feriados / días excluidos (${recalc.cambio}): ${rec.habilesAntes} → ${rec.habilesDespues} días hábiles, ${rec.cantidadAntes} → ${rec.cantidadDespues} viandas, ${formatCurrencyAR(rec.totalAntes)} → ${formatCurrencyAR(rec.totalDespues)}.`;
       const updated = await updatePlan(rec.plan.id, {
         cantidadContratada: rec.cantidadDespues,
+        // El total pedido se mueve lo mismo que las nuevas (los créditos no cambian)
+        ...(rec.plan.cantidadSolicitada !== undefined ? { cantidadSolicitada: Math.max(rec.plan.cantidadSolicitada + rec.cantidadDespues - rec.cantidadAntes, 0) } : {}),
         observaciones: [rec.plan.observaciones, nota].filter(Boolean).join('\n'),
       });
       if (updated) ok += 1;
@@ -277,7 +279,7 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
               const isToday = d === today;
               const dayNum = parseISODate(d).getDate();
               const marca = info.feriado ? 'Feriado' : info.excluida ? 'Excluido' : '';
-              const label = `${formatDateAR(d)}: ${info.shown === null ? 'sin registro' : info.shown === 0 ? 'sin consumo' : `${info.shown} viandas`}${marca ? ` · ${marca}` : ''}`;
+              const label = `${formatDateAR(d)}: ${info.shown === null ? 'sin registro' : info.shown === 0 ? 'sin consumo' : `${info.shown} viandas`}${marca ? ` · ${marca}` : ''}${info.habitualDay ? ' · día programado' : ''}`;
               const tono = marcandoFeriados
                 ? info.feriado
                   ? 'border-2 border-warning bg-warning/35 text-foreground font-bold'
@@ -301,7 +303,7 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
                   title={dayTitle(info, rows.length)}
                   className={`relative h-14 sm:h-[4.5rem] rounded-lg text-lg sm:text-xl tabular-nums transition-colors outline-none flex flex-col items-center justify-center
                     focus-visible:ring-2 focus-visible:ring-ring
-                    ${!marcandoFeriados && info.future ? 'cursor-default opacity-35' : marcandoFeriados ? 'hover:bg-warning/20' : 'hover:bg-primary/10'}
+                    ${!marcandoFeriados && info.future ? (info.habitualDay ? 'cursor-default opacity-75' : 'cursor-default opacity-35') : marcandoFeriados ? 'hover:bg-warning/20' : 'hover:bg-primary/10'}
                     ${marcando === d ? 'animate-pulse' : ''}
                     ${tono}
                     ${isToday ? TODAY_CLASS : ''}

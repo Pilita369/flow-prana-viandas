@@ -1,6 +1,6 @@
 import { formatCurrencyAR, formatDateAR, getSuggestedPrice } from '@/lib/business';
 import { capFirst, monthDays, todayISO } from '@/lib/consumo';
-import { contarDiasHabiles, contratoDelPeriodo, viandasNecesarias } from '@/lib/habiles';
+import { contarDiasHabiles, contarEnTramos, contratoDelPeriodo, tramosDelContrato, viandasNecesarias } from '@/lib/habiles';
 import type { Plan } from '@/types';
 
 /**
@@ -22,11 +22,16 @@ export default function ClientMonthCard({ plans, activePlan, feriados }: { plans
 
   // Días de servicio propios del cliente en este mes (su contrato, sus días y sus exclusiones)
   const contrato = contratoDelPeriodo(plans, mes, today);
-  const desde = contrato && contrato.fechaInicio > primero ? contrato.fechaInicio : primero;
-  const hasta = contrato && contrato.fechaFin < ultimo ? contrato.fechaFin : ultimo;
+  // Sus tramos de servicio (o todo su período), recortados al mes
+  const tramosMes = contrato
+    ? tramosDelContrato(contrato)
+      .map(t => ({ desde: t.desde > primero ? t.desde : primero, hasta: t.hasta < ultimo ? t.hasta : ultimo }))
+      .filter(t => t.desde <= t.hasta)
+    : [];
   const propios = contrato
-    ? contarDiasHabiles(desde, hasta, { diasFijos: contrato.modalidad === 'fijo' ? contrato.diasFijos : undefined, feriados, excluidas: contrato.fechasExcluidas || [] })
+    ? contarEnTramos(tramosMes, { diasFijos: contrato.modalidad === 'fijo' ? contrato.diasFijos : undefined, feriados, excluidas: contrato.fechasExcluidas || [] })
     : null;
+  const conTramos = contrato?.regimen === 'intervalos' && tramosMes.length > 0;
   const distintos = !!propios && propios.habiles !== general.habiles;
 
   const ref = activePlan || contrato || null;
@@ -48,18 +53,19 @@ export default function ClientMonthCard({ plans, activePlan, feriados }: { plans
       <div className="px-4 py-3 space-y-2">
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-muted-foreground">Precio por vianda</span>
-          <strong className="text-xl tabular-nums" data-testid="cliente-precio">{formatCurrencyAR(precio)}</strong>
+          <strong className="tabular-nums whitespace-nowrap shrink-0" data-testid="cliente-precio">{formatCurrencyAR(precio)}</strong>
         </div>
         <div className="flex items-baseline justify-between gap-3">
-          <span className="text-muted-foreground">Mes completo ({general.habiles} días{porDia > 1 ? ` × ${porDia}` : ''})</span>
-          <strong className="text-xl tabular-nums" data-testid="cliente-valor-mes">{formatCurrencyAR(valorMes)}</strong>
+          <span className="text-muted-foreground">Mes completo ({general.habiles} días{porDia > 1 ? ` × ${porDia}` : ''}), referencia</span>
+          <span className="tabular-nums whitespace-nowrap shrink-0" data-testid="cliente-valor-mes">{formatCurrencyAR(valorMes)}</span>
         </div>
         <p className="text-xs text-muted-foreground">Valor de referencia, antes de aplicar saldo a favor. No es obligatorio contratar el mes completo.</p>
         {distintos && propios && (
           <p className="text-sm rounded-lg border-2 border-border px-3 py-2" data-testid="cliente-dias-propios">
             <strong>Tus días de servicio en {mesNombre}: {propios.habiles}</strong>
-            {contrato && contrato.fechaInicio > primero && ` · desde el ${formatDateAR(contrato.fechaInicio)}`}
-            {contrato && contrato.fechaFin < ultimo && ` · hasta el ${formatDateAR(contrato.fechaFin)}`}
+            {conTramos && ` · ${tramosMes.map(t => `${formatDateAR(t.desde).slice(0, 5)} al ${formatDateAR(t.hasta).slice(0, 5)}`).join(' y ')}`}
+            {!conTramos && contrato && contrato.fechaInicio > primero && ` · desde el ${formatDateAR(contrato.fechaInicio)}`}
+            {!conTramos && contrato && contrato.fechaFin < ultimo && ` · hasta el ${formatDateAR(contrato.fechaFin)}`}
             {propios.excluidas.length > 0 && ` · sin ${propios.excluidas.map(d => formatDateAR(d).slice(0, 5)).join(', ')}`}
           </p>
         )}

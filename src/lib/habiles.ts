@@ -1,7 +1,7 @@
 // Días hábiles de un período y cálculo de viandas a partir de ellos (lógica pura, testeable).
 import { calcularTotalContrato, getDayNameFromDate } from '@/lib/business';
 import { addDaysISO, planForMonth, resolvePlanForDate } from '@/lib/consumo';
-import type { DayOfWeek, Plan } from '@/types';
+import type { DayOfWeek, Intervalo, Plan } from '@/types';
 
 export const LUNES_A_VIERNES: DayOfWeek[] = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes'];
 
@@ -14,32 +14,58 @@ export interface DiasHabiles {
   feriados: string[];
   /** Días excluidos del cliente que caen en un día de retiro y no son feriado (para no descontarlos dos veces). */
   excluidas: string[];
+  /** Fechas de servicio efectivas (las que cuentan), ordenadas. */
+  fechas: string[];
+}
+
+type OpcionesDias = { diasFijos?: DayOfWeek[]; feriados: Set<string> | string[]; excluidas?: string[] };
+
+/** Tramos válidos (desde <= hasta), ordenados. */
+export function tramosValidos(tramos: Intervalo[] | undefined): Intervalo[] {
+  return (tramos || [])
+    .filter(t => /^\d{4}-\d{2}-\d{2}$/.test(t?.desde || '') && /^\d{4}-\d{2}-\d{2}$/.test(t?.hasta || '') && t.desde <= t.hasta)
+    .sort((a, b) => a.desde.localeCompare(b.desde));
 }
 
 /**
- * Cuenta los días de retiro entre `inicio` y `fin` (ambos incluidos).
+ * Cuenta los días de atención dentro de uno o varios tramos (ambos extremos incluidos).
+ * Si los tramos se superponen, cada fecha se cuenta una sola vez.
  * Un día que es feriado y además está excluido se descuenta una sola vez.
  */
-export function contarDiasHabiles(
-  inicio: string,
-  fin: string,
-  opts: { diasFijos?: DayOfWeek[]; feriados: Set<string> | string[]; excluidas?: string[] },
-): DiasHabiles {
-  const result: DiasHabiles = { habiles: 0, diasDelPeriodo: 0, feriados: [], excluidas: [] };
-  if (!inicio || !fin || inicio > fin) return result;
+export function contarEnTramos(tramos: Intervalo[], opts: OpcionesDias): DiasHabiles {
+  const result: DiasHabiles = { habiles: 0, diasDelPeriodo: 0, feriados: [], excluidas: [], fechas: [] };
   const dias = opts.diasFijos && opts.diasFijos.length > 0 ? opts.diasFijos : LUNES_A_VIERNES;
   const feriados = opts.feriados instanceof Set ? opts.feriados : new Set(opts.feriados);
   const excluidas = new Set(opts.excluidas || []);
-  let d = inicio;
-  for (let guard = 0; d <= fin && guard < 3700; guard++, d = addDaysISO(d, 1)) {
+  const todas = new Set<string>();
+  for (const t of tramosValidos(tramos)) {
+    for (let d = t.desde, guard = 0; d <= t.hasta && guard < 3700; guard++, d = addDaysISO(d, 1)) todas.add(d);
+  }
+  for (const d of Array.from(todas).sort()) {
     const name = getDayNameFromDate(d);
     if (!name || !dias.includes(name)) continue;
     result.diasDelPeriodo += 1;
     if (feriados.has(d)) result.feriados.push(d);
     else if (excluidas.has(d)) result.excluidas.push(d);
-    else result.habiles += 1;
+    else { result.habiles += 1; result.fechas.push(d); }
   }
   return result;
+}
+
+/** Cuenta los días de retiro entre `inicio` y `fin` (ambos incluidos). */
+export function contarDiasHabiles(inicio: string, fin: string, opts: OpcionesDias): DiasHabiles {
+  return contarEnTramos(inicio && fin ? [{ desde: inicio, hasta: fin }] : [], opts);
+}
+
+/** Tramos en los que el contrato da servicio: sus intervalos, o todo el período. */
+export function tramosDelContrato(plan: Pick<Plan, 'regimen' | 'intervalos' | 'fechaInicio' | 'fechaFin'>): Intervalo[] {
+  const propios = plan.regimen === 'intervalos' ? tramosValidos(plan.intervalos) : [];
+  return propios.length > 0 ? propios : [{ desde: plan.fechaInicio, hasta: plan.fechaFin }];
+}
+
+/** La fecha cae dentro de algún tramo de servicio del contrato. */
+export function enTramos(plan: Pick<Plan, 'regimen' | 'intervalos' | 'fechaInicio' | 'fechaFin'>, fecha: string): boolean {
+  return tramosDelContrato(plan).some(t => t.desde <= fecha && fecha <= t.hasta);
 }
 
 /** Viandas que necesita el período: días hábiles × viandas por retiro. */
@@ -49,7 +75,7 @@ export function viandasNecesarias(habiles: number, unidadesPorRetiro: number): n
 
 /** Días hábiles de un contrato fijo con los feriados y exclusiones indicados. */
 export function habilesDelContrato(plan: Plan, feriados: Set<string>, excluidas: string[] = plan.fechasExcluidas || []): number {
-  return contarDiasHabiles(plan.fechaInicio, plan.fechaFin, { diasFijos: plan.diasFijos, feriados, excluidas }).habiles;
+  return contarEnTramos(tramosDelContrato(plan), { diasFijos: plan.diasFijos, feriados, excluidas }).habiles;
 }
 
 export interface RecalculoContrato {
@@ -72,7 +98,8 @@ export function recalcularContrato(
   antes: { feriados: Set<string>; excluidas: string[] },
   despues: { feriados: Set<string>; excluidas: string[] },
 ): RecalculoContrato | null {
-  if (plan.modalidad !== 'fijo') return null;
+  // Flexible o cantidad indicada a mano: los feriados no cambian lo pedido
+  if (plan.modalidad !== 'fijo' || plan.regimen === 'manual') return null;
   const habilesAntes = habilesDelContrato(plan, antes.feriados, antes.excluidas);
   const habilesDespues = habilesDelContrato(plan, despues.feriados, despues.excluidas);
   if (habilesAntes === habilesDespues) return null;
@@ -147,8 +174,11 @@ export function calcularPropuesta(i: {
   ajustesPendientes: number;
   /** null = calcular por días de servicio. */
   necesariasManual: number | null;
+  /** Tramos de servicio (uno o varios). Si no se pasan, se usa de `inicio` a `fin`. */
+  tramos?: Intervalo[];
 }): PropuestaContrato {
-  const servicio = contarDiasHabiles(i.inicio, i.fin, { diasFijos: i.diasFijos, feriados: i.feriados, excluidas: i.excluidas });
+  const tramos = i.tramos && tramosValidos(i.tramos).length > 0 ? i.tramos : [{ desde: i.inicio, hasta: i.fin }];
+  const servicio = contarEnTramos(tramos, { diasFijos: i.diasFijos, feriados: i.feriados, excluidas: i.excluidas });
   const necesarias = i.necesariasManual !== null ? Math.max(Math.floor(i.necesariasManual || 0), 0) : viandasNecesarias(servicio.habiles, i.unidadesPorRetiro);
   const maxAplicar = Math.max(Math.min(Math.floor(i.saldoDisponible || 0), necesarias), 0);
   const aplicar = i.aplicarElegido === null ? maxAplicar : Math.min(Math.max(Math.floor(i.aplicarElegido || 0), 0), maxAplicar);

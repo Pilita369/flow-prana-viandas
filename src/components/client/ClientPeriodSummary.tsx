@@ -1,37 +1,69 @@
+import { CheckCircle2 } from 'lucide-react';
 import { formatCurrencyAR, formatDateAR } from '@/lib/business';
 import { computePlanBalance, todayISO } from '@/lib/consumo';
+import { estadoDePago, textoTramos } from '@/lib/contrato';
+import { tramosDelContrato } from '@/lib/habiles';
+import type { PagoContrato } from '@/lib/pagos';
 import type { Consumption, CreditNote, Plan } from '@/types';
 
 /**
- * Un solo resumen del contrato registrado: de dónde salen las viandas para usar,
- * cuántas se consumieron, cuántas quedan y el importe. Mismos cálculos que administración.
+ * Un solo resumen del contrato registrado. Arriba y destacado, lo que corresponde pagar;
+ * debajo, de dónde salen las viandas para usar y cuántas quedan. Mismos cálculos que administración.
  */
-export default function ClientPeriodSummary({ plan, plans, consumptions, creditNotes }: {
-  plan: Plan; plans: Plan[]; consumptions: Consumption[]; creditNotes: CreditNote[];
+export default function ClientPeriodSummary({ plan, plans, consumptions, creditNotes, pagos = [] }: {
+  plan: Plan; plans: Plan[]; consumptions: Consumption[]; creditNotes: CreditNote[]; pagos?: PagoContrato[];
 }) {
   const b = computePlanBalance(plan, consumptions, plans, todayISO());
-  const paraUsar = b.compradas + b.saldoAnteriorAplicado + b.ajusteManual - b.ajusteInicial;
+  const creditos = b.saldoAnteriorAplicado + b.ajusteManual;
+  const paraUsar = b.compradas + creditos - b.ajusteInicial;
   const disponibles = Math.max(b.disponible, 0);
   const pct = paraUsar > 0 ? Math.min(Math.round((b.consumidas / paraUsar) * 100), 100) : 0;
 
-  // Importe: viandas nuevas + envío − descuentos en dinero pendientes (igual que antes)
+  // Importe: viandas nuevas + envío − descuentos en dinero; pagos registrados de este contrato
   const envio = plan.tipoEntrega === 'envio' ? plan.costoEnvio || 0 : 0;
   const descuentos = creditNotes
     .filter(n => !n.aplicado && !n.anulado && (n.tipo === 'saldo_envio' || n.tipo === 'descuento'))
     .reduce((a, n) => a + (n.monto || 0), 0);
-  const total = plan.totalCalculado + envio - descuentos;
+  const pago = estadoDePago(Math.max(plan.totalCalculado + envio - descuentos, 0), pagos.filter(x => x.planId === plan.id));
+  const pagado = pago.estado === 'pagado' || pago.estado === 'pagado_de_mas';
+  const parcial = pago.estado === 'parcial';
 
   const partes = [
     b.saldoAnteriorAplicado > 0 && `${b.saldoAnteriorAplicado} trasladadas`,
     `${b.compradas} nuevas`,
     b.ajusteManual > 0 && `${b.ajusteManual} a favor`,
   ].filter(Boolean) as string[];
+  const intervalos = plan.regimen === 'intervalos' && (plan.intervalos?.length || 0) > 0;
 
   return (
     <section className="glass-card p-4 space-y-3" aria-label="Tu período">
       <div>
         <h3 className="font-semibold text-lg">Tu período</h3>
         <p className="tabular-nums font-medium">{formatDateAR(plan.fechaInicio)} al {formatDateAR(plan.fechaFin)}</p>
+        {intervalos && <p className="text-sm" data-testid="cliente-tramos">Días de servicio: {textoTramos(tramosDelContrato(plan))}</p>}
+      </div>
+
+      {/* Lo que corresponde pagar, destacado */}
+      <div className="rounded-xl border-2 border-primary bg-primary/15 px-4 py-3" data-testid="cliente-importe-box">
+        <p className="text-sm font-semibold">
+          {pagado ? <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4" />Pagado</span>
+            : parcial ? 'Te queda por pagar' : 'Importe de tu contratación'}
+        </p>
+        <p className="text-[2.25rem] leading-tight font-bold tabular-nums" data-testid="cliente-importe">
+          {formatCurrencyAR(parcial ? pago.pendiente : pago.aAbonar)}
+        </p>
+        <p className="text-sm" data-testid="cliente-desglose">
+          {b.compradas} vianda{b.compradas === 1 ? '' : 's'} nueva{b.compradas === 1 ? '' : 's'}
+          {creditos > 0 && ` · ${creditos} vianda${creditos === 1 ? '' : 's'} a favor aplicada${creditos === 1 ? '' : 's'}`}
+        </p>
+        {(parcial || pagado || envio > 0 || descuentos > 0) && (
+          <p className="text-xs text-muted-foreground mt-1" data-testid="cliente-detalle-pago">
+            Total {formatCurrencyAR(pago.aAbonar)}
+            {envio > 0 && ` (incluye envío ${formatCurrencyAR(envio)})`}
+            {descuentos > 0 && ` · descuentos ${formatCurrencyAR(descuentos)}`}
+            {pago.pagado > 0 && ` · pagado ${formatCurrencyAR(pago.pagado)}`}
+          </p>
+        )}
       </div>
 
       <dl className="space-y-2 text-base">
@@ -55,19 +87,7 @@ export default function ClientPeriodSummary({ plan, plans, consumptions, creditN
         </div>
       </div>
 
-      <div className="border-t-2 border-border pt-3 space-y-1 text-sm">
-        <div className="flex justify-between gap-3">
-          <span className="text-muted-foreground">Importe por las {b.compradas} nuevas ({formatCurrencyAR(plan.precioUnitario)} c/u)</span>
-          <strong className="tabular-nums" data-testid="cliente-importe">{formatCurrencyAR(plan.totalCalculado)}</strong>
-        </div>
-        {envio > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Envío</span><span className="tabular-nums">{formatCurrencyAR(envio)}</span></div>}
-        {descuentos > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Descuentos a favor</span><span className="tabular-nums">− {formatCurrencyAR(descuentos)}</span></div>}
-        {(envio > 0 || descuentos > 0) && (
-          <div className="flex justify-between font-bold border-t border-border pt-1"><span>Total del período</span><span className="tabular-nums">{formatCurrencyAR(total)}</span></div>
-        )}
-        {b.saldoAnteriorAplicado > 0 && <p className="text-xs text-muted-foreground">Las {b.saldoAnteriorAplicado} trasladadas son saldo a favor de tu período anterior: no se cobran de nuevo.</p>}
-      </div>
-
+      {creditos > 0 && <p className="text-xs text-muted-foreground">Las viandas a favor no se cobran: ya están descontadas de las nuevas ({formatCurrencyAR(plan.precioUnitario)} c/u).</p>}
       <p className="text-xs text-muted-foreground">Así figura tu contrato registrado. Si querés cambiar algo, escribinos.</p>
     </section>
   );

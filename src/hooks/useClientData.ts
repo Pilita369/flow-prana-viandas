@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getClientByLink, getClientConsumptions, getClientPlans, getCreditNotes } from '@/lib/store';
 import type { Client, Consumption, CreditNote, Plan } from '@/types';
+import { getPagosCliente, type PagoContrato } from '@/lib/pagos';
 
 /** Datos de la vista del cliente (solo lectura): cliente, contratos, consumos y ajustes. */
 export function useClientData(accessLink?: string) {
@@ -10,7 +11,8 @@ export function useClientData(accessLink?: string) {
     plans: Plan[];
     consumptions: Consumption[];
     creditNotes: CreditNote[];
-  }>({ loading: true, client: null, plans: [], consumptions: [], creditNotes: [] });
+    pagos: PagoContrato[];
+  }>({ loading: true, client: null, plans: [], consumptions: [], creditNotes: [], pagos: [] });
 
   useEffect(() => {
     if (!accessLink) return;
@@ -19,12 +21,13 @@ export function useClientData(accessLink?: string) {
       try {
         const client = (await getClientByLink(accessLink)) || null;
         if (!client) { if (!cancel) setState(s => ({ ...s, loading: false })); return; }
-        const [plans, consumptions, creditNotes] = await Promise.all([
+        const [plans, consumptions, creditNotes, pagos] = await Promise.all([
           getClientPlans(client.id),
           getClientConsumptions(client.id),
           getCreditNotes(client.id).catch(() => [] as CreditNote[]),
+          getPagosCliente(client.id).catch(() => [] as PagoContrato[]),
         ]);
-        if (!cancel) setState({ loading: false, client, plans, consumptions, creditNotes });
+        if (!cancel) setState({ loading: false, client, plans, consumptions, creditNotes, pagos });
       } catch (e) {
         console.error(e);
         if (!cancel) setState(s => ({ ...s, loading: false }));

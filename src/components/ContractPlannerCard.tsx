@@ -6,9 +6,11 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { formatCurrencyAR, formatDateAR, getSuggestedPrice } from '@/lib/business';
 import {
-  LUNES_A_VIERNES, calcularPropuesta, excluidasEnPeriodo, fechasPropuestas,
+  LUNES_A_VIERNES, calcularPropuesta, excluidasEnPeriodo, fechasPropuestas, tramosValidos,
 } from '@/lib/habiles';
-import type { DayOfWeek, DeliveryType, Plan } from '@/types';
+import type { DayOfWeek, DeliveryType, Intervalo, Plan, Regimen } from '@/types';
+import ServiceRegimeEditor, { type RegimenValor } from '@/components/ServiceRegimeEditor';
+import { textoTramos } from '@/lib/contrato';
 
 const DAYS: { value: DayOfWeek; label: string }[] = [
   { value: 'lunes', label: 'Lun' }, { value: 'martes', label: 'Mar' }, { value: 'miercoles', label: 'Mié' },
@@ -34,6 +36,10 @@ export interface ContratoConfirmado {
   comprar: number;
   sumarPendientes: boolean;
   diasServicio: number;
+  regimen: Regimen;
+  intervalos: Intervalo[];
+  /** Total pedido para el período (incluye lo cubierto por créditos). */
+  cantidadSolicitada: number;
 }
 
 interface Props {
@@ -83,6 +89,7 @@ const ContractPlannerCard = forwardRef<HTMLDetailsElement, Props>(function Contr
   // Con saldo provisional no se aplica nada por defecto: lo decide quien prepara la renovación
   const [aplicarElegido, setAplicarElegido] = useState<number | null>(saldoProvisional ? 0 : null);
   const [necesariasManual, setNecesariasManual] = useState<number | null>(null);
+  const [reg, setReg] = useState<RegimenValor>({ regimen: 'periodo', intervalos: [] });
   const [sumarPendientes, setSumarPendientes] = useState(true);
   const [saving, setSaving] = useState(false);
   // Evita guardar dos veces con un doble toque (el estado tarda un render en actualizarse)
@@ -98,10 +105,15 @@ const ContractPlannerCard = forwardRef<HTMLDetailsElement, Props>(function Contr
 
   // Propuesta para el PERÍODO elegido
   const fijo = form.modalidad === 'fijo';
-  const excluidas = excluidasEnPeriodo(plans, fechas.inicio, fechas.fin);
+  const tramos = reg.regimen === 'intervalos' ? tramosValidos(reg.intervalos) : [];
+  // Con intervalos, el contrato va del primer al último día de los tramos
+  const desde = tramos.length > 0 ? tramos[0].desde : fechas.inicio;
+  const hasta = tramos.length > 0 ? tramos.reduce((m, t) => (t.hasta > m ? t.hasta : m), tramos[0].hasta) : fechas.fin;
+  const excluidas = excluidasEnPeriodo(plans, desde, hasta);
   const p = calcularPropuesta({
     inicio: fechas.inicio,
     fin: fechas.fin,
+    tramos: tramos.length > 0 ? tramos : undefined,
     diasFijos: fijo ? form.diasFijos : LUNES_A_VIERNES,
     unidadesPorRetiro: form.unidadesPorRetiro,
     precioUnitario: form.precioUnitario,
@@ -110,9 +122,9 @@ const ContractPlannerCard = forwardRef<HTMLDetailsElement, Props>(function Contr
     saldoDisponible,
     aplicarElegido,
     ajustesPendientes: sumarPendientes ? viandasPendientes : 0,
-    necesariasManual: fijo ? necesariasManual : (necesariasManual ?? (activePlan?.cantidadContratada || 0)),
+    necesariasManual: reg.regimen === 'manual' ? (necesariasManual ?? 0) : fijo ? necesariasManual : (necesariasManual ?? (activePlan?.cantidadContratada || 0)),
   });
-  const fechasOk = !!fechas.inicio && !!fechas.fin && fechas.inicio <= fechas.fin;
+  const fechasOk = reg.regimen === 'intervalos' ? tramos.length > 0 : !!fechas.inicio && !!fechas.fin && fechas.inicio <= fechas.fin;
   const accion = activePlan ? 'Confirmar renovación' : 'Crear contrato';
 
   const confirmar = async () => {
@@ -121,8 +133,11 @@ const ContractPlannerCard = forwardRef<HTMLDetailsElement, Props>(function Contr
     setSaving(true);
     try {
       const ok = await onConfirm({
-        fechaInicio: fechas.inicio,
-        fechaFin: fechas.fin,
+        fechaInicio: desde,
+        fechaFin: hasta,
+        regimen: reg.regimen,
+        intervalos: tramos,
+        cantidadSolicitada: p.necesarias,
         unidadesPorRetiro: Number(form.unidadesPorRetiro),
         precioUnitario: Number(form.precioUnitario),
         modalidad: form.modalidad,
@@ -158,7 +173,10 @@ const ContractPlannerCard = forwardRef<HTMLDetailsElement, Props>(function Contr
           <p className="text-sm text-muted-foreground">Es una propuesta: no se guarda nada hasta que tocás “{accion}”.</p>
         </div>
 
+        <ServiceRegimeEditor value={reg} onChange={setReg} inicioSugerido={fechas.inicio} finSugerido={fechas.fin} idPrefix="plan" />
+
         <div className="grid grid-cols-2 gap-3">
+          {reg.regimen !== 'intervalos' && <>
           <div>
             <Label htmlFor="plan-inicio">Inicio del servicio</Label>
             <Input id="plan-inicio" type="date" value={fechas.inicio} onChange={e => setFechas(f => ({ ...f, inicio: e.target.value }))} className="h-11 mt-1" />
@@ -167,6 +185,7 @@ const ContractPlannerCard = forwardRef<HTMLDetailsElement, Props>(function Contr
             <Label htmlFor="plan-fin">Fin</Label>
             <Input id="plan-fin" type="date" value={fechas.fin} onChange={e => setFechas(f => ({ ...f, fin: e.target.value }))} className="h-11 mt-1" />
           </div>
+          </>}
           <div>
             <Label htmlFor="plan-unidades">Viandas por día</Label>
             <Input id="plan-unidades" type="number" min={1} inputMode="numeric" value={form.unidadesPorRetiro} onChange={e => setForm({ ...form, unidadesPorRetiro: Math.max(Number(e.target.value), 1) })} className="h-11 mt-1" />
@@ -182,13 +201,18 @@ const ContractPlannerCard = forwardRef<HTMLDetailsElement, Props>(function Contr
           <Tile label="Días de servicio del período" value={String(p.servicio.habiles)} testId="dias-servicio" />
           <Tile label="Viandas necesarias" value={String(p.necesarias)} testId="necesarias" />
         </div>
+        <div>
+          <Label htmlFor="plan-total">Cantidad total que desea contratar</Label>
+          <Input id="plan-total" type="number" min={0} inputMode="numeric" value={p.necesarias} onChange={e => setNecesariasManual(Math.max(Number(e.target.value), 0))} className="h-11 mt-1" />
+          <p className="text-xs text-muted-foreground mt-1">Incluye lo que se cubre con saldo o ajustes. Las nuevas a pagar se calculan abajo.</p>
+        </div>
         <p className="text-sm text-muted-foreground -mt-2">
-          Del {formatDateAR(fechas.inicio)} al {formatDateAR(fechas.fin)}, ambos incluidos: {p.servicio.diasDelPeriodo} {fijo && form.diasFijos.length < 5 ? 'días de retiro' : 'de lunes a viernes'}
+          {reg.regimen === 'intervalos' ? `Tramos ${textoTramos(tramos)}` : `Del ${formatDateAR(fechas.inicio)} al ${formatDateAR(fechas.fin)}`}, ambos extremos incluidos: {p.servicio.diasDelPeriodo} {fijo && form.diasFijos.length < 5 ? 'días de retiro' : 'de lunes a viernes'}
           {p.servicio.feriados.length > 0 && ` − ${p.servicio.feriados.length} feriado(s)`}
           {p.servicio.excluidas.length > 0 && ` − ${p.servicio.excluidas.length} excluido(s)`}
           {` × ${form.unidadesPorRetiro} por día`}.
         </p>
-        {necesariasManual !== null && fijo && (
+        {necesariasManual !== null && fijo && reg.regimen !== 'manual' && (
           <p className="text-sm">
             Cantidad escrita a mano.{' '}
             <button type="button" className="underline text-primary min-h-[2.5rem]" onClick={() => setNecesariasManual(null)}>Volver al cálculo por días</button>
@@ -257,10 +281,6 @@ const ContractPlannerCard = forwardRef<HTMLDetailsElement, Props>(function Contr
                   <Input type="number" min={0} value={form.costoEnvio} onChange={e => setForm({ ...form, costoEnvio: Number(e.target.value) })} className="h-11 mt-1" />
                 </div>
               )}
-              <div>
-                <Label>Viandas necesarias (a mano)</Label>
-                <Input type="number" min={0} value={p.necesarias} onChange={e => setNecesariasManual(Number(e.target.value))} className="h-11 mt-1" />
-              </div>
             </div>
             {fijo ? (
               <div>
@@ -298,7 +318,7 @@ const ContractPlannerCard = forwardRef<HTMLDetailsElement, Props>(function Contr
         </details>
 
         <div className="rounded-lg bg-muted/40 px-3 py-2 text-sm">
-          Al confirmar se crea el contrato del <strong>{formatDateAR(fechas.inicio)}</strong> al <strong>{formatDateAR(fechas.fin)}</strong> con{' '}
+          Al confirmar se crea el contrato del <strong>{formatDateAR(desde)}</strong> al <strong>{formatDateAR(hasta)}</strong>{tramos.length > 1 && <> (tramos {textoTramos(tramos)})</>} con{' '}
           <strong>{p.comprar}</strong> viandas nuevas{p.aplicar > 0 && <>, se aplican <strong>{p.aplicar}</strong> a favor</>}
           {sumarPendientes && viandasPendientes > 0 && <> y se suman <strong>{viandasPendientes}</strong> de ajustes</>}.
           {activePlan && ' El contrato actual queda en el historial.'}

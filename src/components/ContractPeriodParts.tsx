@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { formatCurrencyAR, formatDateAR } from '@/lib/business';
 import type { PlanBalance } from '@/lib/consumo';
-import type { DiasHabiles } from '@/lib/habiles';
+import { tramosDelContrato, type DiasHabiles } from '@/lib/habiles';
+import { textoTramos } from '@/lib/contrato';
 import type { CreditNote, Plan } from '@/types';
 
 function Dato({ label, value, strong, testId }: { label: string; value: string; strong?: boolean; testId?: string }) {
@@ -74,10 +75,11 @@ export function QuantityReview({ plan, balance, servicio, necesarias, onConfirm 
     <div className="rounded-lg border-2 border-warning/60 bg-warning/10 px-3 py-2 text-sm space-y-2" data-testid="revision">
       <p className="font-semibold">Revisión de la cantidad</p>
       <p>
-        Del {formatDateAR(plan.fechaInicio)} al {formatDateAR(plan.fechaFin)}: {servicio.diasDelPeriodo} de lunes a viernes
+        {plan.regimen === 'intervalos' ? `Tramos ${textoTramos(tramosDelContrato(plan))}` : `Del ${formatDateAR(plan.fechaInicio)} al ${formatDateAR(plan.fechaFin)}`}: {servicio.diasDelPeriodo} días de atención
         {' '}− {servicio.feriados.length} feriado(s){servicio.feriados.length > 0 && ` (${servicio.feriados.map(corto).join(', ')})`}
         {' '}− {servicio.excluidas.length} excluido(s){servicio.excluidas.length > 0 && ` (${servicio.excluidas.map(corto).join(', ')})`}
-        {' '}= <strong>{servicio.habiles} días</strong> × {plan.unidadesPorRetiro || 1} = {necesarias} viandas
+        {' '}= <strong>{servicio.habiles} días</strong> × {plan.unidadesPorRetiro || 1} = {servicio.habiles * (plan.unidadesPorRetiro || 1)} viandas
+        {plan.cantidadSolicitada !== undefined && plan.cantidadSolicitada !== servicio.habiles * (plan.unidadesPorRetiro || 1) && <>; pedidas: <strong>{necesarias}</strong></>}
         {' '}− {balance.saldoAnteriorAplicado} trasladadas{balance.ajusteManual > 0 && ` − ${balance.ajusteManual} de ajustes`}
         {' '}= <strong data-testid="revision-comprar">{comprar} a comprar</strong>.
       </p>

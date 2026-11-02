@@ -102,7 +102,17 @@ export interface Plan {
   saldoOrigenPlanId?: string;
   // Viandas a favor cargadas a mano y asignadas a este contrato (no anuladas). Se calcula al leer.
   ajusteManualFavor?: number;
+
+  // Régimen de servicio. Sin régimen o 'periodo' = todo el período (como siempre).
+  // 'intervalos' = solo dentro de los tramos indicados; 'manual' = cantidad total indicada a mano.
+  regimen?: Regimen;
+  intervalos?: Intervalo[];
+  // Total de viandas pedido para el período (incluye las que se cubren con créditos)
+  cantidadSolicitada?: number;
 }
+
+export type Regimen = 'periodo' | 'intervalos' | 'manual';
+export interface Intervalo { desde: string; hasta: string }
 
 // ==============================================
 // CONSUMOS / MOVIMIENTOS

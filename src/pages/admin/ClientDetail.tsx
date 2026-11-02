@@ -20,15 +20,16 @@ import { useRefreshOnReturn } from '@/hooks/useConsumptionSaver';
 import { formatCurrencyAR, formatDateAR, calcularTotalContrato } from '@/lib/business';
 import { toast } from 'sonner';
 import { useFeriados } from '@/lib/feriados';
-import { contarDiasHabiles, viandasNecesarias } from '@/lib/habiles';
 import type { Client, Plan, Consumption, PointTransaction, DayOfWeek, CreditNote } from '@/types';
 import ClientCreditNotes from '@/components/ClientCreditNotes';
 import ContractPlannerCard, { type ContratoConfirmado } from '@/components/ContractPlannerCard';
+import ServiceRegimeEditor, { type RegimenValor } from '@/components/ServiceRegimeEditor';
+import ContractRegimeCalc from '@/components/ContractRegimeCalc';
 import MonthWorkdaysCard from '@/components/MonthWorkdaysCard';
 import ActiveContractSummary from '@/components/ActiveContractSummary';
 import { getPagosCliente, type PagoContrato } from '@/lib/pagos';
-import { estimarCobertura } from '@/lib/contrato';
-import { contratoDelPeriodo, contratosDelMes } from '@/lib/habiles';
+import { estimarCobertura, propuestaRegimen } from '@/lib/contrato';
+import { contratoDelPeriodo, contratosDelMes, tramosValidos } from '@/lib/habiles';
 
 const DAYS: { value: DayOfWeek; label: string }[] = [
   { value: 'lunes', label: 'Lunes' },
@@ -65,6 +66,9 @@ export default function ClientDetail() {
 
   // Estado de edición del plan
   const [editingPlan, setEditingPlan] = useState(false);
+  // Régimen del contrato en edición (mes completo / intervalos / cantidad manual) y total pedido (null = por días)
+  const [regEdit, setRegEdit] = useState<RegimenValor>({ regimen: 'periodo', intervalos: [] });
+  const [totalEdit, setTotalEdit] = useState<number | null>(null);
   const [planEdit, setPlanEdit] = useState({
     cantidadContratada: 0,
     ajusteInicialUsadas: 0,
@@ -114,6 +118,9 @@ export default function ClientDetail() {
       await refreshPagos();
 
       if (activePlan) {
+        setRegEdit({ regimen: activePlan.regimen || 'periodo', intervalos: activePlan.intervalos || [] });
+        // Por defecto se conserva lo contratado: total = nuevas + créditos (no cambia nada si solo se edita otro dato)
+        setTotalEdit(activePlan.cantidadSolicitada ?? activePlan.cantidadContratada + (activePlan.saldoAnteriorAplicado || 0) + (activePlan.ajusteManualFavor || 0));
         setPlanEdit({
           cantidadContratada: activePlan.cantidadContratada,
           ajusteInicialUsadas: activePlan.ajusteInicialUsadas || 0,
@@ -218,6 +225,9 @@ export default function ClientDetail() {
         observaciones: [c.observaciones.trim(), notaSaldo].filter(Boolean).join('\n') || undefined,
         ajusteInicialUsadas: 0,
         fechasExcluidas: c.fechasExcluidas,
+        regimen: c.regimen,
+        intervalos: c.intervalos,
+        cantidadSolicitada: c.cantidadSolicitada,
       };
       const nuevo = vigente ? await renovarPlan(client.id, datos, getRenovacionPuntos()) : await createPlan(datos);
       if (pendientes.length > 0) {
@@ -238,15 +248,20 @@ export default function ClientDetail() {
     }
   };
   const handleSavePlan = async () => {
-    if (!plan) return;
+    if (!plan || !propEdit) return;
     try {
+      const tramos = regEdit.regimen === 'intervalos' ? tramosValidos(regEdit.intervalos) : [];
+      if (regEdit.regimen === 'intervalos' && tramos.length === 0) { toast.error('Cargá al menos un intervalo válido'); return; }
       await updatePlan(plan.id, {
-        cantidadContratada: Number(planEdit.cantidadContratada),
+        regimen: regEdit.regimen,
+        intervalos: regEdit.regimen === 'intervalos' ? tramos : [],
+        cantidadSolicitada: propEdit.solicitadas,
+        cantidadContratada: propEdit.nuevas,
         ajusteInicialUsadas: Number(planEdit.ajusteInicialUsadas),
         precioUnitario: Number(planEdit.precioUnitario),
         costoEnvio: planEdit.tipoEntrega === 'envio' ? Number(planEdit.costoEnvio) : undefined,
-        fechaInicio: planEdit.fechaInicio,
-        fechaFin: planEdit.fechaFin,
+        fechaInicio: tramos.length > 0 ? tramos[0].desde : planEdit.fechaInicio,
+        fechaFin: tramos.length > 0 ? tramos.reduce((m, t) => (t.hasta > m ? t.hasta : m), tramos[0].hasta) : planEdit.fechaFin,
         tipoEntrega: planEdit.tipoEntrega,
         modalidad: planEdit.modalidad,
         unidadesPorRetiro: Number(planEdit.unidadesPorRetiro),
@@ -288,10 +303,20 @@ export default function ClientDetail() {
     ? estimarCobertura(plan, balanceActivo.disponible, ultimoRegistro ? addDaysISO(ultimoRegistro, 1) : plan.fechaInicio, feriados)?.sobrantes ?? 0
     : 0;
 
-  const totalEditado = calcularTotalContrato(planEdit.cantidadContratada, planEdit.precioUnitario);
-  const habilesEdit = planEdit.modalidad === 'fijo' && plan
-    ? contarDiasHabiles(planEdit.fechaInicio, planEdit.fechaFin, { diasFijos: planEdit.diasFijos, feriados, excluidas: plan.fechasExcluidas || [] })
-    : null;
+  const tramosEdit = regEdit.regimen === 'intervalos' && tramosValidos(regEdit.intervalos).length > 0
+    ? tramosValidos(regEdit.intervalos)
+    : [{ desde: planEdit.fechaInicio, hasta: planEdit.fechaFin }];
+  const propEdit = plan ? propuestaRegimen({
+    tramos: tramosEdit,
+    diasFijos: planEdit.modalidad === 'fijo' ? planEdit.diasFijos : undefined,
+    unidadesPorRetiro: Number(planEdit.unidadesPorRetiro) || 1,
+    feriados,
+    excluidas: plan.fechasExcluidas || [],
+    total: regEdit.regimen === 'manual' ? (totalEdit ?? 0) : totalEdit,
+    creditos: (plan.saldoAnteriorAplicado || 0) + (plan.ajusteManualFavor || 0),
+    precioUnitario: Number(planEdit.precioUnitario) || 0,
+  }) : null;
+  const ajustesDineroEdit = creditNotes.filter(n => !n.aplicado && !n.anulado && (n.tipo === 'saldo_envio' || n.tipo === 'descuento')).reduce((a, n) => a + (n.monto || 0), 0);
   const handleCopyLink = async () => { await navigator.clipboard.writeText(accessUrl); toast.success('Link copiado'); };
   const handleWhatsApp = () => {
     const msg = encodeURIComponent(`Hola ${client.nombre}, te comparto tu acceso de Mundo Prana para ver tu seguimiento: ${accessUrl}`);
@@ -413,20 +438,12 @@ export default function ClientDetail() {
                     <div className="space-y-3">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <Label className="text-xs">Cantidad contratada</Label>
-                          <Input type="number" value={planEdit.cantidadContratada} onChange={e => setPlanEdit({ ...planEdit, cantidadContratada: Number(e.target.value) })} className="h-8 text-sm" />
-                        </div>
-                        <div>
                           <Label className="text-xs">Ajuste inicial usado</Label>
                           <Input type="number" value={planEdit.ajusteInicialUsadas} onChange={e => setPlanEdit({ ...planEdit, ajusteInicialUsadas: Number(e.target.value) })} className="h-8 text-sm" />
                         </div>
                         <div>
                           <Label className="text-xs">Precio por vianda</Label>
                           <Input type="number" value={planEdit.precioUnitario} onChange={e => setPlanEdit({ ...planEdit, precioUnitario: Number(e.target.value) })} className="h-8 text-sm" />
-                        </div>
-                        <div>
-                          <Label className="text-xs">Total calculado</Label>
-                          <Input value={formatCurrencyAR(totalEditado)} readOnly className="h-8 text-sm bg-muted" />
                         </div>
                         <div>
                           <Label className="text-xs">Viandas por retiro</Label>
@@ -462,25 +479,25 @@ export default function ClientDetail() {
                         </div>
                       </div>
 
-                      {habilesEdit && plan && (() => {
-                        const necesarias = viandasNecesarias(habilesEdit.habiles, planEdit.unidadesPorRetiro);
-                        const cubiertas = (plan.saldoAnteriorAplicado || 0) + (plan.ajusteManualFavor || 0);
-                        const comprar = Math.max(necesarias - cubiertas, 0);
-                        return (
-                          <div className="rounded-lg border-2 border-border bg-muted/30 p-3 text-sm space-y-2">
-                            <p>
-                              <strong>{habilesEdit.habiles} días hábiles</strong> del {formatDateAR(planEdit.fechaInicio)} al {formatDateAR(planEdit.fechaFin)}
-                              {' '}({habilesEdit.diasDelPeriodo} − {habilesEdit.feriados.length} feriado(s) − {habilesEdit.excluidas.length} excluido(s))
-                              {' '}→ {necesarias} viandas{cubiertas > 0 && `, ${cubiertas} ya cubiertas por saldo y ajustes`} → <strong>{comprar} a comprar</strong>.
-                            </p>
-                            {comprar !== Number(planEdit.cantidadContratada) && (
-                              <Button variant="outline" size="sm" className="h-9" onClick={() => setPlanEdit({ ...planEdit, cantidadContratada: comprar })}>
-                                Usar {comprar} ({formatCurrencyAR(calcularTotalContrato(comprar, planEdit.precioUnitario))})
-                              </Button>
-                            )}
-                          </div>
-                        );
-                      })()}
+                      {/* Régimen de servicio y cálculo: mes completo, intervalos o cantidad manual */}
+                      <ServiceRegimeEditor value={regEdit} onChange={setRegEdit} inicioSugerido={planEdit.fechaInicio} finSugerido={planEdit.fechaFin} idPrefix="edit" />
+                      {propEdit && (
+                        <ContractRegimeCalc
+                          plan={plan}
+                          regimen={regEdit.regimen}
+                          tramos={tramosEdit}
+                          unidades={Number(planEdit.unidadesPorRetiro) || 1}
+                          precio={Number(planEdit.precioUnitario) || 0}
+                          p={propEdit}
+                          totalManual={totalEdit}
+                          onTotal={setTotalEdit}
+                          consumptions={consumptions}
+                          pagos={pagos}
+                          ajustesDinero={ajustesDineroEdit}
+                          envio={planEdit.tipoEntrega === 'envio' ? Number(planEdit.costoEnvio) || 0 : 0}
+                        />
+                      )}
+                      <p className="text-xs text-muted-foreground">Nada cambia hasta tocar “Guardar”. Los consumos y pagos existentes se conservan.</p>
 
                       {planEdit.modalidad === 'fijo' && (
                         <div>
