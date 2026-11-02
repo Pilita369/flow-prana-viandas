@@ -38,6 +38,8 @@ interface Props {
   /** Mes que se ve ('YYYY-MM'). Si se pasa, lo controla la ficha (la tarjeta de días hábiles lo sigue). */
   mes?: string;
   onMesChange?: (mes: string) => void;
+  /** Contrato del período seleccionado (lo elige la ficha). null = el mes no tiene contrato. */
+  planPeriodo?: Plan | null;
 }
 
 function shiftMonth(mes: string, delta: number): string {
@@ -51,7 +53,7 @@ function shiftMonth(mes: string, delta: number): string {
  * - Modo "Registrar consumos": se toca cada fecha y se elige 0, 1, 2 o más viandas (misma función que la planilla general).
  * - Modo "Feriados y días excluidos": se toca una fecha para marcarla o desmarcarla. No crea ni borra consumos.
  */
-export default function ClientConsumptionCalendar({ client, plans, consumptions, onConsumptionsChange, onPlansChange, viandasPendientes = 0, mes: mesProp, onMesChange }: Props) {
+export default function ClientConsumptionCalendar({ client, plans, consumptions, onConsumptionsChange, onPlansChange, viandasPendientes = 0, mes: mesProp, onMesChange, planPeriodo }: Props) {
   const today = todayISO();
   const [mesLocal, setMesLocal] = useState(today.slice(0, 7));
   const mes = mesProp ?? mesLocal;
@@ -123,7 +125,7 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
         // Un feriado vale para todos: se revisan los contratos de todos los clientes que cubren esa fecha
         const [allPlans, clients] = await Promise.all([loadPlans(), loadClients()]);
         items = allPlans
-          .filter(p => p.fechaInicio <= fecha && fecha <= p.fechaFin)
+          .filter(p => p.fechaInicio <= fecha && fecha <= p.fechaFin && p.fechaFin >= today) // los contratos terminados no se recalculan
           .map(p => {
             const excluidas = p.fechasExcluidas || [];
             const rec = recalcularContrato(p, { feriados: feriadosAntes, excluidas }, { feriados: feriadosDespues, excluidas });
@@ -143,7 +145,7 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
         cambio = `${formatDateAR(fecha)} ${marcar ? 'excluido' : 'ya no está excluido'} solo para ${nombre}`;
         toast.success(capFirst(cambio));
         const rec = recalcularContrato(plan, { feriados: feriadosAntes, excluidas: antes }, { feriados: feriadosAntes, excluidas: despues });
-        items = rec ? [{ rec, clientName: nombre }] : [];
+        items = rec && plan.fechaFin >= today ? [{ rec, clientName: nombre }] : []; // contrato terminado: no se recalcula
       }
 
       await onPlansChange?.();
@@ -173,8 +175,8 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
     await onPlansChange?.();
   };
 
-  // Resumen del mes (solo consumos) y del contrato vigente (saldo, con su período)
-  const vigente = plans.find(p => p.activo) || planForMonth(plans, year, month0);
+  // Resumen del mes (solo consumos) y del contrato del período seleccionado (saldo, con sus fechas)
+  const vigente = planPeriodo !== undefined ? planPeriodo : (plans.find(p => p.activo) || planForMonth(plans, year, month0) || null);
   const balanceVigente = vigente ? computePlanBalance(vigente, consumptions, plans, today) : undefined;
   const inMonth = consumptions.filter(c => c.fecha.startsWith(mes));
   const consumidasMes = inMonth.filter(c => isConsumed(c.status)).reduce((a, c) => a + (c.cantidad || 0), 0);
@@ -325,21 +327,34 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
             </div>
             {vigente && balanceVigente ? (
               <div className="rounded-lg border-2 border-primary/50 p-3 space-y-2">
-                <p className="text-sm">
-                  <span className="font-semibold">Contrato vigente</span>{' '}
+                <p className="text-sm" data-testid="resumen-contrato">
+                  <span className="font-semibold">{vigente.activo ? 'Contrato vigente' : 'Contrato del período'}</span>{' '}
                   <span className="tabular-nums">{formatDateAR(vigente.fechaInicio)} al {formatDateAR(vigente.fechaFin)}</span>
-                  {vigente.fechaFin < today && <span className="text-muted-foreground"> · finalizado</span>}
+                  {balanceVigente.cerrado && <span className="text-muted-foreground"> · cerrado</span>}
                 </p>
-                <div className="grid grid-cols-3 2xl:grid-cols-5 gap-2 text-center">
-                  <MiniStat label="Compradas" value={balanceVigente.compradas} />
-                  <MiniStat label="Trasladado" value={balanceVigente.saldoAnteriorAplicado} />
-                  <MiniStat label="Ajustes a favor" value={balanceVigente.ajusteManual} />
-                  <MiniStat label="Consumidas" value={balanceVigente.consumidas} />
-                  <MiniStat label="Disponible" value={balanceVigente.disponible} cls={balanceVigente.disponible < 0 ? 'bg-destructive/10 text-destructive' : 'bg-blue-500/10 text-blue-700'} />
-                </div>
+                {balanceVigente.cerrado ? (
+                  /* Contrato cerrado: su cierre, sin mezclar con el contrato siguiente */
+                  <div className="grid grid-cols-3 2xl:grid-cols-5 gap-2 text-center">
+                    <MiniStat label="Compradas" value={balanceVigente.compradas} />
+                    {balanceVigente.saldoAnteriorAplicado > 0 && <MiniStat label="Recibido" value={balanceVigente.saldoAnteriorAplicado} />}
+                    <MiniStat label="Ajustes a favor" value={balanceVigente.ajusteManual} />
+                    <MiniStat label="Consumidas" value={balanceVigente.consumidas} />
+                    <MiniStat label="Saldo al cierre" value={Math.max(balanceVigente.restante, 0)} cls="bg-blue-500/10 text-blue-700" />
+                    <MiniStat label="Trasladado" value={balanceVigente.trasladado} />
+                    <MiniStat label="Pendiente de trasladar" value={balanceVigente.aFavorSinAplicar} />
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 2xl:grid-cols-5 gap-2 text-center">
+                    <MiniStat label="Compradas" value={balanceVigente.compradas} />
+                    <MiniStat label="Trasladado" value={balanceVigente.saldoAnteriorAplicado} />
+                    <MiniStat label="Ajustes a favor" value={balanceVigente.ajusteManual} />
+                    <MiniStat label="Consumidas" value={balanceVigente.consumidas} />
+                    <MiniStat label="Disponible" value={balanceVigente.disponible} cls={balanceVigente.disponible < 0 ? 'bg-destructive/10 text-destructive' : 'bg-blue-500/10 text-blue-700'} />
+                  </div>
+                )}
               </div>
             ) : (
-              <p className="rounded-lg border-2 border-border p-3 text-sm text-muted-foreground">Sin contrato vigente.</p>
+              <p className="rounded-lg border-2 border-border p-3 text-sm text-muted-foreground">Sin contrato en este mes.</p>
             )}
           </div>
           {viandasPendientes > 0 && (

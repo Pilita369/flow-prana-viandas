@@ -1,6 +1,6 @@
 // Días hábiles de un período y cálculo de viandas a partir de ellos (lógica pura, testeable).
 import { calcularTotalContrato, getDayNameFromDate } from '@/lib/business';
-import { addDaysISO, resolvePlanForDate } from '@/lib/consumo';
+import { addDaysISO, planForMonth, resolvePlanForDate } from '@/lib/consumo';
 import type { DayOfWeek, Plan } from '@/types';
 
 export const LUNES_A_VIERNES: DayOfWeek[] = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes'];
@@ -162,4 +162,31 @@ export function excluidasEnPeriodo(plans: Plan[], inicio: string, fin: string): 
   if (!inicio || !fin || inicio > fin) return [];
   const fechas = new Set(plans.flatMap(p => p.fechasExcluidas || []));
   return Array.from(fechas).filter(d => d >= inicio && d <= fin && isExcluidaCliente(plans, d)).sort();
+}
+
+/** Contratos que tienen al menos un día dentro del mes 'YYYY-MM', ordenados por inicio. */
+export function contratosDelMes(plans: Plan[], mes: string): Plan[] {
+  const desde = `${mes}-01`;
+  const hasta = ultimoDiaDelMes(mes);
+  return plans
+    .filter(p => p.fechaInicio <= hasta && p.fechaFin >= desde)
+    .sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio));
+}
+
+/**
+ * Contrato que se muestra para un mes: el que cubre hoy (si el mes es el actual),
+ * si no el de mayor superposición con el mes; si ninguno lo toca, el vigente que ya había empezado.
+ */
+export function contratoDelPeriodo(plans: Plan[], mes: string, today: string): Plan | undefined {
+  const delMes = contratosDelMes(plans, mes);
+  if (delMes.length === 0) {
+    const vigente = plans.find(p => p.activo);
+    return vigente && vigente.fechaInicio <= ultimoDiaDelMes(mes) ? vigente : undefined;
+  }
+  if (today.slice(0, 7) === mes) {
+    const hoy = delMes.filter(p => p.fechaInicio <= today && today <= p.fechaFin);
+    if (hoy.length > 0) return hoy[hoy.length - 1];
+  }
+  const [y, m] = mes.split('-').map(Number);
+  return planForMonth(delMes, y, m - 1) || delMes[delMes.length - 1];
 }

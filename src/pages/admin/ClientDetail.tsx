@@ -28,6 +28,7 @@ import MonthWorkdaysCard from '@/components/MonthWorkdaysCard';
 import ActiveContractSummary from '@/components/ActiveContractSummary';
 import { getPagosCliente, type PagoContrato } from '@/lib/pagos';
 import { estimarCobertura } from '@/lib/contrato';
+import { contratoDelPeriodo, contratosDelMes } from '@/lib/habiles';
 
 const DAYS: { value: DayOfWeek; label: string }[] = [
   { value: 'lunes', label: 'Lunes' },
@@ -84,6 +85,9 @@ export default function ClientDetail() {
   // Mes que se ve en el calendario: lo sigue la tarjeta de días hábiles
   const [mes, setMes] = useState(todayISO().slice(0, 7));
   const plannerRef = useRef<HTMLDetailsElement>(null);
+  // Contrato que se muestra: el del mes seleccionado en el calendario (se puede elegir si hay varios)
+  const [planElegidoId, setPlanElegidoId] = useState<string | null>(null);
+  useEffect(() => { setPlanElegidoId(null); }, [mes]);
   const [pagos, setPagos] = useState<PagoContrato[]>([]);
   const refreshPagos = async () => {
     if (!id) return;
@@ -264,6 +268,19 @@ export default function ClientDetail() {
   if (!client) return null;
 
   const accessUrl = `${window.location.origin}/cliente/${client.accessLink}`;
+  const contratosMes = contratosDelMes(clientPlans, mes);
+  const planSel = (planElegidoId && clientPlans.find(p => p.id === planElegidoId)) || contratoDelPeriodo(clientPlans, mes, todayISO()) || null;
+  const esVigente = !!planSel && planSel.id === plan?.id;
+
+  /** Cambia la cantidad comprada del contrato en curso, solo después de confirmar la revisión. */
+  const revisarCantidad = async (p: Plan, nuevaCantidad: number, detalle: string) => {
+    const nota = `[${todayLabelAR()}] Cantidad revisada: ${p.cantidadContratada} → ${nuevaCantidad} viandas (${detalle}). Importe ${formatCurrencyAR(p.totalCalculado)} → ${formatCurrencyAR(calcularTotalContrato(nuevaCantidad, p.precioUnitario))}.`;
+    const updated = await updatePlan(p.id, { cantidadContratada: nuevaCantidad, observaciones: [p.observaciones, nota].filter(Boolean).join('\n') });
+    if (!updated) { toast.error('No se pudo actualizar la cantidad'); return; }
+    toast.success('Cantidad actualizada');
+    await refreshPlans();
+  };
+
   // Saldo para el próximo mes: provisional mientras el contrato vigente no terminó (sus viandas pueden consumirse)
   const saldoProvisional = !!plan && plan.fechaFin >= todayISO() && !getNextPlan(clientPlans, plan);
   const ultimoRegistro = plan ? consumptions.filter(c => c.planId === plan.id).map(c => c.fecha).sort().pop() : undefined;
@@ -336,26 +353,43 @@ export default function ClientDetail() {
                 onConsumptionsChange={next => { void refreshAfterConsumption(next); }}
                 onPlansChange={refreshPlans}
                 viandasPendientes={viandasPendientes}
+                planPeriodo={planSel}
               />
               <ClientCreditNotes clientId={client.id} plans={clientPlans} activePlan={plan} onChange={notes => { void refreshAfterCredits(notes); }} />
             </div>
 
             <div className="space-y-5 min-w-0 xl:col-start-2 xl:row-start-2">
-              {/* Contrato vigente, con su período bien identificado */}
-              <div className="glass-card p-5 space-y-3">
+              {/* Contrato del período seleccionado, con sus fechas bien identificadas */}
+              <div className="glass-card p-5 space-y-3" data-testid="tarjeta-contrato">
+                {contratosMes.length > 1 && (
+                  <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Contratos de este mes">
+                    {contratosMes.map(c => (
+                      <button key={c.id} type="button" role="radio" aria-checked={c.id === planSel?.id}
+                        onClick={() => { setPlanElegidoId(c.id); setEditingPlan(false); }}
+                        className={`min-h-[2.75rem] rounded-lg border-2 px-3 text-sm font-medium ${c.id === planSel?.id ? 'border-primary bg-primary/20' : 'border-border hover:bg-muted'}`}>
+                        {formatDateAR(c.fechaInicio).slice(0, 5)} al {formatDateAR(c.fechaFin).slice(0, 5)}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <h3 className="font-semibold">Contrato vigente</h3>
-                    {plan && (
-                      <p className="text-lg font-bold tabular-nums">{formatDateAR(plan.fechaInicio)} al {formatDateAR(plan.fechaFin)}</p>
+                    <h3 className="font-semibold">{esVigente ? 'Contrato vigente' : 'Contrato del período'}</h3>
+                    {planSel && (
+                      <p className="text-lg font-bold tabular-nums" data-testid="contrato-periodo">{formatDateAR(planSel.fechaInicio)} al {formatDateAR(planSel.fechaFin)}</p>
                     )}
-                    {plan && plan.fechaFin < todayISO() && (
+                    {planSel && !esVigente && (
+                      <span className="inline-block mt-1 text-xs font-semibold rounded-full bg-muted text-foreground border border-border px-2.5 py-1">
+                        Cerrado{plan ? ` · vigente: ${formatDateAR(plan.fechaInicio)} al ${formatDateAR(plan.fechaFin)}` : ''}
+                      </span>
+                    )}
+                    {esVigente && plan && plan.fechaFin < todayISO() && (
                       <span className="inline-block mt-1 text-xs font-semibold rounded-full bg-warning/20 text-foreground border border-warning px-2.5 py-1">
                         Finalizó el {formatDateAR(plan.fechaFin)} · sin renovar
                       </span>
                     )}
                   </div>
-                  {plan && !editingPlan && (
+                  {esVigente && plan && !editingPlan && (
                     <div className="flex gap-2">
                       <Button variant="outline" size="sm" onClick={() => { if (plannerRef.current) { plannerRef.current.open = true; plannerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }}>
                         <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Renovar
@@ -373,8 +407,8 @@ export default function ClientDetail() {
                   )}
                 </div>
 
-                {plan ? (
-                  editingPlan ? (
+                {planSel ? (
+                  editingPlan && esVigente && plan ? (
                     /* FORMULARIO DE EDICIÓN */
                     <div className="space-y-3">
                       <div className="grid grid-cols-2 gap-3">
@@ -491,25 +525,26 @@ export default function ClientDetail() {
                     <>
                       <ActiveContractSummary
                         client={client}
-                        plan={plan}
+                        plan={planSel}
                         plans={clientPlans}
                         consumptions={consumptions}
                         feriados={feriados}
                         creditNotes={creditNotes}
                         pagos={pagos}
                         onPagosChange={refreshPagos}
+                        onRevisarCantidad={esVigente ? revisarCantidad : undefined}
                       />
                       <div className="flex flex-wrap gap-2">
-                        <Badge variant="secondary">{plan.modalidad}</Badge>
-                        <Badge variant="outline">{plan.tipoEntrega}</Badge>
-                        <Badge variant="outline">{plan.unidadesPorRetiro} por día</Badge>
+                        <Badge variant="secondary">{planSel.modalidad}</Badge>
+                        <Badge variant="outline">{planSel.tipoEntrega}</Badge>
+                        <Badge variant="outline">{planSel.unidadesPorRetiro} por día</Badge>
                       </div>
-                      {plan.diasFijos?.length ? <p className="text-sm text-muted-foreground"><strong>Días fijos:</strong> {plan.diasFijos.join(', ')}</p> : null}
-                      {plan.observaciones ? <p className="text-sm text-muted-foreground whitespace-pre-line"><strong>Observaciones:</strong> {plan.observaciones}</p> : null}
+                      {planSel.diasFijos?.length ? <p className="text-sm text-muted-foreground"><strong>Días fijos:</strong> {planSel.diasFijos.join(', ')}</p> : null}
+                      {planSel.observaciones ? <p className="text-sm text-muted-foreground whitespace-pre-line"><strong>Observaciones:</strong> {planSel.observaciones}</p> : null}
                     </>
                   )
                 ) : (
-                  <p className="text-sm text-muted-foreground">Sin contrato activo</p>
+                  <p className="text-sm text-muted-foreground">Sin contrato en este mes.{plan ? ` Contrato vigente: ${formatDateAR(plan.fechaInicio)} al ${formatDateAR(plan.fechaFin)}.` : ''}</p>
                 )}
               </div>
             </div>

@@ -181,6 +181,17 @@ describe('ficha del cliente y planilla general sobre los mismos registros', () =
     expect(db.consumptions).toHaveLength(1);
   });
 
+  it('un feriado en un contrato ya terminado no propone recalcularlo', async () => {
+    db.plans[0].fecha_fin = '2026-11-05'; // terminó antes de hoy (10/11)
+    render(<Ficha initial={await store.loadClientConsumptionsOrThrow('c1')} />);
+    fireEvent.click(screen.getByRole('radio', { name: /Marcar feriados/ }));
+    fireEvent.click(dayButton(/^03\/11\/2026/));
+    await waitFor(() => expect(db.feriados.map(r => r.fecha)).toEqual(['2026-11-03']));
+    await new Promise(r => setTimeout(r, 50));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(db.plans[0].cantidad_contratada).toBe(20);
+  });
+
   it('los días futuros no se pueden cargar', async () => {
     render(<Ficha initial={[]} />);
     expect(dayButton(/^11\/11\/2026/)).toBeDisabled();

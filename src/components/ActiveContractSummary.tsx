@@ -8,6 +8,7 @@ import { formatCurrencyAR, formatDateAR } from '@/lib/business';
 import { addDaysISO, computePlanBalance, todayISO } from '@/lib/consumo';
 import { estadoDePago, estimarCobertura, necesidadDelContrato, resumenWhatsApp } from '@/lib/contrato';
 import { anularPago, registrarPago, type PagoContrato } from '@/lib/pagos';
+import { ContractAdjustments, ContractCloseout, QuantityReview } from '@/components/ContractPeriodParts';
 import type { Client, Consumption, CreditNote, Plan } from '@/types';
 
 interface Props {
@@ -19,6 +20,8 @@ interface Props {
   creditNotes: CreditNote[];
   pagos: PagoContrato[];
   onPagosChange: () => void | Promise<void>;
+  /** Cambia la cantidad comprada después de que la persona confirma la revisión (solo contrato en curso). */
+  onRevisarCantidad?: (plan: Plan, nuevaCantidad: number, detalle: string) => Promise<void>;
 }
 
 const ESTADO: Record<string, { label: string; cls: string }> = {
@@ -28,8 +31,12 @@ const ESTADO: Record<string, { label: string; cls: string }> = {
   pagado_de_mas: { label: 'Pagado de más', cls: 'border-warning bg-warning/20 text-foreground' },
 };
 
-/** Resumen del contrato vigente: lo que cubre, lo que cuesta, lo pagado y hasta cuándo alcanzan las viandas. */
-export default function ActiveContractSummary({ client, plan, plans, consumptions, feriados, creditNotes, pagos, onPagosChange }: Props) {
+/**
+ * Resumen del contrato del período seleccionado.
+ * En curso: lo que cubre, revisión de la cantidad, pago y hasta cuándo alcanzan las viandas.
+ * Cerrado: el cierre tal como quedó, sin recalcular cantidades históricas.
+ */
+export default function ActiveContractSummary({ client, plan, plans, consumptions, feriados, creditNotes, pagos, onPagosChange, onRevisarCantidad }: Props) {
   const today = todayISO();
   const { servicio, necesarias } = necesidadDelContrato(plan, feriados);
   const balance = computePlanBalance(plan, consumptions, plans, today);
@@ -94,6 +101,10 @@ export default function ActiveContractSummary({ client, plan, plans, consumption
 
   return (
     <div className="space-y-3">
+      {balance.cerrado ? (
+        <ContractCloseout plan={plan} plans={plans} balance={balance} />
+      ) : (
+      <>
       <div className="grid grid-cols-2 gap-2">
         <Dato label="Días de servicio" value={String(servicio.habiles)} />
         <Dato label="Viandas necesarias" value={String(necesarias)} testId="contrato-necesarias" />
@@ -109,6 +120,8 @@ export default function ActiveContractSummary({ client, plan, plans, consumption
         </p>
       )}
 
+      <QuantityReview plan={plan} balance={balance} servicio={servicio} necesarias={necesarias} onConfirm={onRevisarCantidad} />
+
       {/* Cobertura: todas las viandas utilizables, no solo las compradas */}
       {cobertura && (
         <p className="text-sm rounded-lg border-2 border-border bg-muted/30 px-3 py-2" data-testid="cobertura">
@@ -120,6 +133,10 @@ export default function ActiveContractSummary({ client, plan, plans, consumption
               : <>Alcanzan hasta el <strong>{cobertura.hasta ? formatDateAR(cobertura.hasta) : '-'}</strong>; faltan {cobertura.faltantes} para cubrir hasta el {formatDateAR(plan.fechaFin)}.</>}
         </p>
       )}
+      </>
+      )}
+
+      <ContractAdjustments plan={plan} creditNotes={creditNotes} />
 
       {/* Pago */}
       <div className="rounded-lg border-2 border-border p-3 space-y-2">
