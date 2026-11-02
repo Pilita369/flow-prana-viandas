@@ -23,10 +23,11 @@ function publish(list: string[]) {
 }
 
 /** Lee los feriados de Supabase. La primera vez en cada dispositivo sube los que había guardados en él (sin duplicar). */
-export function loadFeriados(force = false): Promise<string[]> {
+export function loadFeriados(force = false, soloLectura = false): Promise<string[]> {
   if (loading && !force) return loading;
   loading = (async () => {
-    if (!localStorage.getItem(MIGRATION_KEY)) {
+    // La vista del cliente solo lee: nunca sube feriados desde su dispositivo
+    if (!soloLectura && !localStorage.getItem(MIGRATION_KEY)) {
       const local = readLocal();
       if (local.length > 0) {
         const { error } = await supabase
@@ -69,9 +70,10 @@ function subscribe(listener: () => void) {
 }
 
 /** Feriados actuales; se actualizan al marcar o desmarcar desde cualquier pantalla. */
-export function useFeriados(): { feriados: Set<string>; lista: string[] } {
+export function useFeriados(opts: { soloLectura?: boolean } = {}): { feriados: Set<string>; lista: string[] } {
   const lista = useSyncExternalStore(subscribe, () => current, () => current);
-  useEffect(() => { loadFeriados().catch(e => console.error('No se pudieron leer los feriados:', e)); }, []);
+  const soloLectura = !!opts.soloLectura;
+  useEffect(() => { loadFeriados(false, soloLectura).catch(e => console.error('No se pudieron leer los feriados:', e)); }, [soloLectura]);
   const feriados = useMemo(() => new Set(lista), [lista]);
   return { feriados, lista };
 }

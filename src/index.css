@@ -93,6 +93,59 @@
   }
 }
 
+/* Alto contraste (vista del cliente): textos, bordes y botones más marcados, en claro y en oscuro */
+html.hc {
+  --background: 40 30% 98%;
+  --foreground: 150 45% 5%;
+  --card: 0 0% 100%;
+  --card-foreground: 150 45% 5%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 150 45% 5%;
+  --primary: 152 65% 19%;
+  --primary-foreground: 0 0% 100%;
+  --muted: 40 18% 89%;
+  --muted-foreground: 150 30% 16%;
+  --border: 150 25% 28%;
+  --input: 150 25% 28%;
+  --ring: 30 95% 35%;
+  --secondary: 30 90% 36%;
+  --secondary-foreground: 0 0% 100%;
+  --warning: 30 95% 36%;
+  --warning-foreground: 0 0% 100%;
+  --destructive: 0 80% 38%;
+}
+html.dark.hc {
+  --background: 0 0% 0%;
+  --foreground: 0 0% 100%;
+  --card: 150 15% 6%;
+  --card-foreground: 0 0% 100%;
+  --popover: 150 15% 8%;
+  --popover-foreground: 0 0% 100%;
+  --primary: 150 75% 60%;
+  --primary-foreground: 150 60% 4%;
+  --muted: 150 10% 15%;
+  --muted-foreground: 40 30% 92%;
+  --border: 40 15% 72%;
+  --input: 40 15% 72%;
+  --ring: 45 100% 62%;
+  --secondary: 45 100% 62%;
+  --secondary-foreground: 30 60% 5%;
+  --warning: 45 100% 62%;
+  --warning-foreground: 30 60% 5%;
+  --destructive: 0 90% 70%;
+}
+html.hc .glass-card { border-width: 2px; box-shadow: none; }
+html.hc :focus-visible { outline: 3px solid hsl(var(--ring)); outline-offset: 2px; }
+html.hc:not(.dark) .text-green-600, html.hc:not(.dark) .text-green-700 { color: hsl(145 80% 20%); }
+html.hc:not(.dark) .text-blue-600, html.hc:not(.dark) .text-blue-700 { color: hsl(210 90% 28%); }
+html.hc:not(.dark) .text-amber-700, html.hc:not(.dark) .text-amber-800 { color: hsl(30 95% 26%); }
+html.dark.hc .text-green-600, html.dark.hc .text-green-700 { color: hsl(140 80% 72%); }
+html.dark.hc .text-blue-600, html.dark.hc .text-blue-700 { color: hsl(205 100% 80%); }
+
+/* Vista del cliente: letra apenas más grande y texto secundario más legible en tema claro */
+html.client-ui { font-size: 16.5px; }
+html.client-ui:not(.dark):not(.hc) { --muted-foreground: 150 14% 33%; }
+
 /* Panel admin: letra un poco más grande y líneas más marcadas */
 html.admin-ui { font-size: 17px; }
 @media (max-width: 640px) { html.admin-ui { font-size: 16.5px; } }

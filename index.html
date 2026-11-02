@@ -43,6 +43,13 @@
         if (location.pathname.indexOf('/admin') === 0) {
           document.documentElement.classList.add('admin-ui');
           if (localStorage.getItem('mp_admin_theme') !== 'light') document.documentElement.classList.add('dark');
+        } else if (location.pathname.indexOf('/cliente') === 0) {
+          // Vista del cliente: apariencia elegida en este dispositivo (claro, oscuro o la del sistema) y alto contraste
+          var m = localStorage.getItem('mp_client_theme');
+          var oscuro = m === 'dark' || (m !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.add('client-ui');
+          if (oscuro) document.documentElement.classList.add('dark');
+          if (localStorage.getItem('mp_client_contrast') === 'true') document.documentElement.classList.add('hc');
         }
       } catch (e) {}
     </script>
