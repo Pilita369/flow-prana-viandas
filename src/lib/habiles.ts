@@ -94,3 +94,72 @@ export function recalcularContrato(
 export function isExcluidaCliente(plans: Plan[], fecha: string): boolean {
   return !!resolvePlanForDate(plans, fecha)?.fechasExcluidas?.includes(fecha);
 }
+
+/** Último día de un mes 'YYYY-MM'. */
+export function ultimoDiaDelMes(mes: string): string {
+  const [y, m] = mes.split('-').map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${mes}-${String(last).padStart(2, '0')}`;
+}
+
+/**
+ * Fechas propuestas para contratar el mes seleccionado:
+ * desde el 1 del mes (o el día siguiente al fin del contrato vigente, si es posterior) hasta el último día del mes.
+ */
+export function fechasPropuestas(mes: string, contratoVigente?: Plan | null): { inicio: string; fin: string } {
+  let inicio = `${mes}-01`;
+  if (contratoVigente?.fechaFin) {
+    const siguiente = addDaysISO(contratoVigente.fechaFin, 1);
+    if (siguiente > inicio) inicio = siguiente;
+  }
+  let fin = ultimoDiaDelMes(mes);
+  if (fin < inicio) fin = ultimoDiaDelMes(inicio.slice(0, 7));
+  return { inicio, fin };
+}
+
+export interface PropuestaContrato {
+  servicio: DiasHabiles;
+  necesarias: number;
+  /** Máximo de saldo a favor que se puede aplicar (no más que lo disponible ni que lo necesario). */
+  maxAplicar: number;
+  aplicar: number;
+  ajustes: number;
+  comprar: number;
+  importe: number;
+}
+
+/**
+ * Propuesta de contratación para un período. Solo calcula: no guarda nada.
+ * necesarias = días de servicio × viandas por día (o la cantidad escrita a mano);
+ * comprar = necesarias − saldo aplicado − ajustes pendientes que se suman.
+ */
+export function calcularPropuesta(i: {
+  inicio: string;
+  fin: string;
+  diasFijos?: DayOfWeek[];
+  unidadesPorRetiro: number;
+  precioUnitario: number;
+  feriados: Set<string>;
+  excluidas: string[];
+  saldoDisponible: number;
+  /** null = aplicar todo lo posible. */
+  aplicarElegido: number | null;
+  ajustesPendientes: number;
+  /** null = calcular por días de servicio. */
+  necesariasManual: number | null;
+}): PropuestaContrato {
+  const servicio = contarDiasHabiles(i.inicio, i.fin, { diasFijos: i.diasFijos, feriados: i.feriados, excluidas: i.excluidas });
+  const necesarias = i.necesariasManual !== null ? Math.max(Math.floor(i.necesariasManual || 0), 0) : viandasNecesarias(servicio.habiles, i.unidadesPorRetiro);
+  const maxAplicar = Math.max(Math.min(Math.floor(i.saldoDisponible || 0), necesarias), 0);
+  const aplicar = i.aplicarElegido === null ? maxAplicar : Math.min(Math.max(Math.floor(i.aplicarElegido || 0), 0), maxAplicar);
+  const ajustes = Math.max(Math.floor(i.ajustesPendientes || 0), 0);
+  const comprar = Math.max(necesarias - aplicar - ajustes, 0);
+  return { servicio, necesarias, maxAplicar, aplicar, ajustes, comprar, importe: calcularTotalContrato(comprar, i.precioUnitario) };
+}
+
+/** Días excluidos del cliente dentro de un período (según el contrato al que corresponde cada fecha). */
+export function excluidasEnPeriodo(plans: Plan[], inicio: string, fin: string): string[] {
+  if (!inicio || !fin || inicio > fin) return [];
+  const fechas = new Set(plans.flatMap(p => p.fechasExcluidas || []));
+  return Array.from(fechas).filter(d => d >= inicio && d <= fin && isExcluidaCliente(plans, d)).sort();
+}

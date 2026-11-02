@@ -14,7 +14,7 @@ import {
   capFirst, computePlanBalance, dayTotal, isConsumed, monthDays, parseISODate, planForMonth, resolvePlanForDate, todayISO, todayLabelAR,
 } from '@/lib/consumo';
 import { getFeriadosActuales, loadFeriados, setFeriado, useFeriados } from '@/lib/feriados';
-import { contarDiasHabiles, isExcluidaCliente, recalcularContrato, viandasNecesarias } from '@/lib/habiles';
+import { recalcularContrato } from '@/lib/habiles';
 import { loadClients, loadPlans, updatePlan } from '@/lib/store';
 import type { Client, Consumption, Plan } from '@/types';
 
@@ -35,6 +35,9 @@ interface Props {
   onPlansChange?: () => void | Promise<void>;
   /** Viandas a favor cargadas a mano que todavía no suman a ningún contrato. */
   viandasPendientes?: number;
+  /** Mes que se ve ('YYYY-MM'). Si se pasa, lo controla la ficha (la tarjeta de días hábiles lo sigue). */
+  mes?: string;
+  onMesChange?: (mes: string) => void;
 }
 
 function shiftMonth(mes: string, delta: number): string {
@@ -48,9 +51,15 @@ function shiftMonth(mes: string, delta: number): string {
  * - Modo "Registrar consumos": se toca cada fecha y se elige 0, 1, 2 o más viandas (misma función que la planilla general).
  * - Modo "Feriados y días excluidos": se toca una fecha para marcarla o desmarcarla. No crea ni borra consumos.
  */
-export default function ClientConsumptionCalendar({ client, plans, consumptions, onConsumptionsChange, onPlansChange, viandasPendientes = 0 }: Props) {
+export default function ClientConsumptionCalendar({ client, plans, consumptions, onConsumptionsChange, onPlansChange, viandasPendientes = 0, mes: mesProp, onMesChange }: Props) {
   const today = todayISO();
-  const [mes, setMes] = useState(today.slice(0, 7));
+  const [mesLocal, setMesLocal] = useState(today.slice(0, 7));
+  const mes = mesProp ?? mesLocal;
+  const setMes = (next: string | ((prev: string) => string)) => {
+    const value = typeof next === 'function' ? next(mes) : next;
+    setMesLocal(value);
+    onMesChange?.(value);
+  };
   const year = Number(mes.slice(0, 4));
   const month0 = Number(mes.slice(5, 7)) - 1;
   const days = useMemo(() => monthDays(year, month0), [year, month0]);
@@ -164,20 +173,12 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
     await onPlansChange?.();
   };
 
-  // Resumen del mes
-  const plan = planForMonth(plans, year, month0);
-  const balance = plan ? computePlanBalance(plan, consumptions, plans, today) : undefined;
+  // Resumen del mes (solo consumos) y del contrato vigente (saldo, con su período)
+  const vigente = plans.find(p => p.activo) || planForMonth(plans, year, month0);
+  const balanceVigente = vigente ? computePlanBalance(vigente, consumptions, plans, today) : undefined;
   const inMonth = consumptions.filter(c => c.fecha.startsWith(mes));
   const consumidasMes = inMonth.filter(c => isConsumed(c.status)).reduce((a, c) => a + (c.cantidad || 0), 0);
-
-  // Días hábiles: del mes que se ve y del contrato
-  const diasCliente = plan?.modalidad === 'fijo' ? plan.diasFijos : undefined;
-  const habilesMes = contarDiasHabiles(days[0], days[days.length - 1], {
-    diasFijos: diasCliente, feriados, excluidas: days.filter(d => isExcluidaCliente(plans, d)),
-  });
-  const habilesContrato = plan && plan.modalidad === 'fijo'
-    ? contarDiasHabiles(plan.fechaInicio, plan.fechaFin, { diasFijos: plan.diasFijos, feriados, excluidas: plan.fechasExcluidas || [] })
-    : null;
+  const diasConConsumo = new Set(inMonth.filter(c => isConsumed(c.status) && (c.cantidad || 0) > 0).map(c => c.fecha)).size;
 
   // Lunes = primera columna
   const leading = (parseISODate(days[0]).getDay() + 6) % 7;
@@ -315,43 +316,41 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
 
           {marcandoFeriados ? <FeriadosLegend /> : <ConsumptionLegend keyboardHint={false} />}
 
-          {/* Días hábiles: cálculo del mes y del contrato */}
-          <div className="rounded-lg border-2 border-border bg-muted/30 px-3 py-2 text-sm space-y-1">
-            <p>
-              <strong>{mesCorto}: {habilesMes.habiles} días hábiles</strong>
-              <span className="text-muted-foreground"> · {habilesMes.diasDelPeriodo} de {diasCliente && diasCliente.length < 5 ? 'retiro' : 'lunes a viernes'}
-                {habilesMes.feriados.length > 0 && ` − ${habilesMes.feriados.length} feriado${habilesMes.feriados.length > 1 ? 's' : ''}`}
-                {habilesMes.excluidas.length > 0 && ` − ${habilesMes.excluidas.length} excluido${habilesMes.excluidas.length > 1 ? 's' : ''}`}</span>
-            </p>
-            {plan && habilesContrato && (
-              <p className="text-muted-foreground">
-                Contrato {formatDateAR(plan.fechaInicio)} al {formatDateAR(plan.fechaFin)}: {habilesContrato.habiles} días hábiles
-                → {viandasNecesarias(habilesContrato.habiles, plan.unidadesPorRetiro)} viandas
-                (cubre {plan.cantidadContratada + (plan.saldoAnteriorAplicado || 0) + (plan.ajusteManualFavor || 0)})
-              </p>
+          {/* Resumen: consumos del MES por un lado y saldo del CONTRATO VIGENTE (con su período) por otro */}
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <div className="rounded-lg border-2 border-border p-3">
+              <p className="text-sm font-semibold">Consumos de {mesCorto.toLowerCase()}</p>
+              <p className="text-3xl font-bold tabular-nums" data-testid="consumidas-mes">{consumidasMes}</p>
+              <p className="text-sm text-muted-foreground">{diasConConsumo} día(s) con consumo</p>
+            </div>
+            {vigente && balanceVigente ? (
+              <div className="rounded-lg border-2 border-primary/50 p-3 space-y-2">
+                <p className="text-sm">
+                  <span className="font-semibold">Contrato vigente</span>{' '}
+                  <span className="tabular-nums">{formatDateAR(vigente.fechaInicio)} al {formatDateAR(vigente.fechaFin)}</span>
+                  {vigente.fechaFin < today && <span className="text-muted-foreground"> · finalizado</span>}
+                </p>
+                <div className="grid grid-cols-3 2xl:grid-cols-5 gap-2 text-center">
+                  <MiniStat label="Compradas" value={balanceVigente.compradas} />
+                  <MiniStat label="Trasladado" value={balanceVigente.saldoAnteriorAplicado} />
+                  <MiniStat label="Ajustes a favor" value={balanceVigente.ajusteManual} />
+                  <MiniStat label="Consumidas" value={balanceVigente.consumidas} />
+                  <MiniStat label="Disponible" value={balanceVigente.disponible} cls={balanceVigente.disponible < 0 ? 'bg-destructive/10 text-destructive' : 'bg-blue-500/10 text-blue-700'} />
+                </div>
+              </div>
+            ) : (
+              <p className="rounded-lg border-2 border-border p-3 text-sm text-muted-foreground">Sin contrato vigente.</p>
             )}
           </div>
-
-          {plan && balance ? (
-            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 text-center">
-              <MiniStat label="Compradas" value={balance.compradas} />
-              <MiniStat label="Saldo trasladado" value={balance.saldoAnteriorAplicado} />
-              <MiniStat label="Ajustes a favor" value={balance.ajusteManual} />
-              <MiniStat label="Consumidas (mes)" value={consumidasMes} cls="bg-green-500/10 text-green-700" />
-              <MiniStat label="Disponible" value={balance.disponible} cls={balance.disponible < 0 ? 'bg-destructive/10 text-destructive' : 'bg-blue-500/10 text-blue-700'} />
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">Sin contrato en este mes · {consumidasMes} consumidas</p>
-          )}
           {viandasPendientes > 0 && (
             <p className="text-sm rounded-lg border-2 border-warning/60 bg-warning/10 px-3 py-2">
               Hay <strong>{viandasPendientes} vianda(s) a favor pendientes de aplicar</strong> que todavía no suman al disponible.
               Sumalas al contrato desde <strong>Ajustes y saldo a favor</strong> (abajo) o al renovar.
             </p>
           )}
-          {balance && balance.excedido > 0 && (
+          {balanceVigente && balanceVigente.excedido > 0 && (
             <p className="text-sm rounded bg-destructive/10 text-destructive px-3 py-2">
-              Se registraron {balance.excedido} vianda(s) más de las disponibles. No se modificaron pagos ni contratos.
+              Se registraron {balanceVigente.excedido} vianda(s) más de las disponibles. No se modificaron pagos ni contratos.
             </p>
           )}
         </>

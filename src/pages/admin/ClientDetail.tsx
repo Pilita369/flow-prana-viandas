@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Copy, Send, X, Edit2, Check, RefreshCw, CalendarCheck, History, Award } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -9,10 +9,10 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
   getClient, getActivePlan, loadClientConsumptionsOrThrow, getClientPoints, getClientPlans,
-  updatePlan,
+  updatePlan, loadPlans, createPlan,
   renovarPlan, getCreditNotes, assignPendingManualCredits, isPendingManualCredit,
 } from '@/lib/store';
-import { addDaysISO, addMonthsISO, computePlanBalance, splitCarryOver, todayISO, todayLabelAR } from '@/lib/consumo';
+import { computePlanBalance, todayISO, todayLabelAR } from '@/lib/consumo';
 import ClientHistory from '@/components/ClientHistory';
 import ClientPointsPanel from '@/components/ClientPointsPanel';
 import ClientConsumptionCalendar from '@/components/ClientConsumptionCalendar';
@@ -20,9 +20,10 @@ import { useRefreshOnReturn } from '@/hooks/useConsumptionSaver';
 import { formatCurrencyAR, formatDateAR, getDiasEstimadosFromPlan, calculateFixedPlanEstimatedEndDate, calcularTotalContrato } from '@/lib/business';
 import { toast } from 'sonner';
 import { useFeriados } from '@/lib/feriados';
-import { LUNES_A_VIERNES, contarDiasHabiles, isExcluidaCliente, viandasNecesarias } from '@/lib/habiles';
+import { contarDiasHabiles, viandasNecesarias } from '@/lib/habiles';
 import type { Client, Plan, Consumption, PointTransaction, DayOfWeek, CreditNote } from '@/types';
 import ClientCreditNotes from '@/components/ClientCreditNotes';
+import ContractPlannerCard, { type ContratoConfirmado } from '@/components/ContractPlannerCard';
 
 const DAYS: { value: DayOfWeek; label: string }[] = [
   { value: 'lunes', label: 'Lunes' },
@@ -31,13 +32,6 @@ const DAYS: { value: DayOfWeek; label: string }[] = [
   { value: 'jueves', label: 'Jueves' },
   { value: 'viernes', label: 'Viernes' },
 ];
-
-/** Días excluidos del cliente dentro de un período (según el contrato al que corresponde cada fecha). */
-function enumerarExcluidas(plans: Plan[], inicio: string, fin: string): string[] {
-  if (!inicio || !fin || inicio > fin) return [];
-  const fechas = new Set(plans.flatMap(p => p.fechasExcluidas || []));
-  return Array.from(fechas).filter(d => d >= inicio && d <= fin && isExcluidaCliente(plans, d)).sort();
-}
 
 function getRenovacionPuntos(): number {
   try {
@@ -82,26 +76,10 @@ export default function ClientDetail() {
     observaciones: '',
   });
 
-  // Estado de renovación
-  const [renovando, setRenovando] = useState(false);
   const { feriados } = useFeriados();
-  const [renovForm, setRenovForm] = useState({
-    necesita: 0,
-    /** true = la cantidad la escribió a mano; false = se toma de los días hábiles. */
-    necesitaManual: false,
-    saldoAplicado: 0,
-    precioUnitario: 0,
-    costoEnvio: 0,
-    fechaInicio: '',
-    fechaFin: '',
-    tipoEntrega: 'retiro' as 'retiro' | 'envio',
-    modalidad: 'fijo' as 'fijo' | 'flexible',
-    unidadesPorRetiro: 1,
-    diasFijos: [] as DayOfWeek[],
-    cantidadSemanal: 0,
-    horaLimite: '',
-    observaciones: '',
-  });
+  // Mes que se ve en el calendario: lo sigue la tarjeta de días hábiles
+  const [mes, setMes] = useState(todayISO().slice(0, 7));
+  const plannerRef = useRef<HTMLDivElement>(null);
 
   const load = async () => {
     if (!id) return;
@@ -184,96 +162,67 @@ export default function ClientDetail() {
   // Viandas a favor cargadas a mano que todavía no suman a ningún contrato: se ofrecen al renovar
   const creditosPendientes = creditNotes.filter(isPendingManualCredit);
   const viandasPendientes = creditosPendientes.reduce((acc, n) => acc + (n.cantidad || 0), 0);
-  const [sumarPendientes, setSumarPendientes] = useState(true);
 
-  // Días hábiles del período a renovar: lunes a viernes (o los días del contrato) sin feriados ni días excluidos
-  const excluidasRenov = enumerarExcluidas(clientPlans, renovForm.fechaInicio, renovForm.fechaFin);
-  const habilesRenov = contarDiasHabiles(renovForm.fechaInicio, renovForm.fechaFin, {
-    diasFijos: renovForm.modalidad === 'fijo' ? renovForm.diasFijos : LUNES_A_VIERNES, feriados, excluidas: excluidasRenov,
-  });
-  const necesariasCalc = viandasNecesarias(habilesRenov.habiles, renovForm.unidadesPorRetiro);
-  const necesitaRenov = renovForm.necesitaManual || renovForm.modalidad !== 'fijo' ? Number(renovForm.necesita) : necesariasCalc;
-
-  const openRenovar = () => {
-    if (!plan) return;
-    // Fecha inicio = día siguiente al fin del plan actual (o hoy si ya pasó)
-    const today = todayISO();
-    const inicio = plan.fechaFin >= today ? addDaysISO(plan.fechaFin, 1) : today;
-    // Un mes completo: del 02/11 al 01/12 (ambos incluidos)
-    const fin = addDaysISO(addMonthsISO(inicio, 1), -1);
-
-    setRenovForm({
-      necesita: plan.cantidadContratada,
-      necesitaManual: plan.modalidad !== 'fijo',
-      saldoAplicado: saldoAFavorActivo,
-      precioUnitario: plan.precioUnitario,
-      costoEnvio: plan.costoEnvio || 0,
-      fechaInicio: inicio,
-      fechaFin: fin,
-      tipoEntrega: plan.tipoEntrega,
-      modalidad: plan.modalidad,
-      unidadesPorRetiro: plan.unidadesPorRetiro,
-      diasFijos: plan.diasFijos || [],
-      cantidadSemanal: plan.cantidadSemanal || 3,
-      horaLimite: plan.horaLimite || '20:00',
-      observaciones: '',
-    });
-    setRenovando(true);
-    setEditingPlan(false);
-  };
-
-  const handleConfirmarRenovacion = async () => {
-    if (!client || !plan) return;
-    const { aplicar, comprar: comprarSinAjustes } = splitCarryOver(necesitaRenov, Math.min(Number(renovForm.saldoAplicado), saldoAFavorActivo));
-    if (necesitaRenov <= 0) { toast.error('Indicá cuántas viandas necesita para el período'); return; }
-    const pendientesIds = sumarPendientes ? creditosPendientes.map(n => n.id) : [];
-    const ajustes = sumarPendientes ? viandasPendientes : 0;
-    const comprar = Math.max(comprarSinAjustes - ajustes, 0);
-    const notaSaldo = aplicar > 0
-      ? `[${todayLabelAR()}] Saldo anterior aplicado: ${aplicar} vianda(s) del contrato ${formatDateAR(plan.fechaInicio)}–${formatDateAR(plan.fechaFin)}.`
-      : '';
+  /**
+   * Guarda el contrato preparado en la tarjeta (crear o renovar). Es el único lugar donde se aplica el saldo:
+   * antes de guardar se relee de la base cuánto queda a favor, así no se aplica dos veces.
+   */
+  const confirmarContrato = async (c: ContratoConfirmado): Promise<boolean> => {
+    if (!client || !id) return false;
+    if (c.necesarias <= 0) { toast.error('Indicá cuántas viandas necesita para el período'); return false; }
     try {
-      const nuevo = await renovarPlan(
-        client.id,
-        {
-          clientId: client.id,
-          cantidadContratada: comprar,
-          saldoAnteriorAplicado: aplicar,
-          saldoOrigenPlanId: aplicar > 0 ? plan.id : undefined,
-          precioUnitario: Number(renovForm.precioUnitario),
-          costoEnvio: renovForm.tipoEntrega === 'envio' ? Number(renovForm.costoEnvio) : undefined,
-          fechaInicio: renovForm.fechaInicio,
-          fechaFin: renovForm.fechaFin,
-          tipoEntrega: renovForm.tipoEntrega,
-          modalidad: renovForm.modalidad,
-          unidadesPorRetiro: Number(renovForm.unidadesPorRetiro),
-          diasFijos: renovForm.modalidad === 'fijo' ? renovForm.diasFijos : undefined,
-          cantidadSemanal: renovForm.modalidad === 'flexible' ? Number(renovForm.cantidadSemanal) : undefined,
-          horaLimite: renovForm.modalidad === 'flexible' ? renovForm.horaLimite : undefined,
-          observaciones: [renovForm.observaciones, notaSaldo].filter(Boolean).join('\n') || undefined,
-          ajusteInicialUsadas: 0,
-          // Días excluidos del cliente ya marcados dentro del nuevo período
-          fechasExcluidas: excluidasRenov,
-        },
-        getRenovacionPuntos()
-      );
-      if (pendientesIds.length > 0) {
+      const [planesBase, consumosBase, notasBase] = await Promise.all([loadPlans(), loadClientConsumptionsOrThrow(id), getCreditNotes(id)]);
+      const planesCliente = planesBase.filter(p => p.clientId === id);
+      const vigente = planesCliente.find(p => p.activo) || null;
+      const saldoBase = vigente ? computePlanBalance(vigente, consumosBase, planesCliente, todayISO()).aFavorSinAplicar : 0;
+      if (c.aplicar > saldoBase) {
+        toast.error(`El saldo a favor cambió (quedan ${saldoBase}). Revisá la propuesta antes de confirmar.`);
+        await load();
+        return false;
+      }
+      const pendientes = c.sumarPendientes ? notasBase.filter(isPendingManualCredit) : [];
+      const ajustes = pendientes.reduce((acc, n) => acc + (n.cantidad || 0), 0);
+      const comprar = Math.max(c.necesarias - c.aplicar - ajustes, 0);
+      const notaSaldo = c.aplicar > 0 && vigente
+        ? `[${todayLabelAR()}] Saldo anterior aplicado: ${c.aplicar} vianda(s) del contrato ${formatDateAR(vigente.fechaInicio)}–${formatDateAR(vigente.fechaFin)}.`
+        : '';
+      const datos = {
+        clientId: client.id,
+        cantidadContratada: comprar,
+        saldoAnteriorAplicado: vigente ? c.aplicar : 0,
+        saldoOrigenPlanId: vigente && c.aplicar > 0 ? vigente.id : undefined,
+        precioUnitario: c.precioUnitario,
+        costoEnvio: c.costoEnvio,
+        fechaInicio: c.fechaInicio,
+        fechaFin: c.fechaFin,
+        tipoEntrega: c.tipoEntrega,
+        modalidad: c.modalidad,
+        unidadesPorRetiro: c.unidadesPorRetiro,
+        diasFijos: c.diasFijos,
+        cantidadSemanal: c.cantidadSemanal,
+        horaLimite: c.horaLimite,
+        observaciones: [c.observaciones.trim(), notaSaldo].filter(Boolean).join('\n') || undefined,
+        ajusteInicialUsadas: 0,
+        fechasExcluidas: c.fechasExcluidas,
+      };
+      const nuevo = vigente ? await renovarPlan(client.id, datos, getRenovacionPuntos()) : await createPlan(datos);
+      if (pendientes.length > 0) {
         try {
-          await assignPendingManualCredits(pendientesIds, nuevo.id, 'sumado al renovar');
+          await assignPendingManualCredits(pendientes.map(n => n.id), nuevo.id, vigente ? 'sumado al renovar' : 'sumado al crear el contrato');
         } catch (err) {
           console.error(err);
-          toast.error('El plan se renovó, pero no se pudieron sumar los ajustes pendientes. Sumalos desde "Ajustes y saldo a favor".');
+          toast.error('El contrato se guardó, pero no se pudieron sumar los ajustes pendientes. Sumalos desde "Ajustes y saldo a favor".');
         }
       }
-      toast.success(`Plan renovado. +${getRenovacionPuntos()} puntos asignados`);
-      setRenovando(false);
+      toast.success(vigente ? `Contrato renovado. +${getRenovacionPuntos()} puntos asignados` : 'Contrato creado');
       await load();
+      return true;
     } catch (e) {
       console.error(e);
-      toast.error('Error al renovar el plan');
+      toast.error('No se pudo guardar el contrato. No se aplicó ningún saldo.');
+      return false;
     }
   };
-
   const handleSavePlan = async () => {
     if (!plan) return;
     try {
@@ -314,11 +263,6 @@ export default function ClientDetail() {
   const habilesEdit = planEdit.modalidad === 'fijo' && plan
     ? contarDiasHabiles(planEdit.fechaInicio, planEdit.fechaFin, { diasFijos: planEdit.diasFijos, feriados, excluidas: plan.fechasExcluidas || [] })
     : null;
-  const renovBase = splitCarryOver(necesitaRenov, Math.min(renovForm.saldoAplicado, saldoAFavorActivo));
-  const ajustesRenov = sumarPendientes ? viandasPendientes : 0;
-  const renovSplit = { aplicar: renovBase.aplicar, comprar: Math.max(renovBase.comprar - ajustesRenov, 0) };
-  const totalRenov = calcularTotalContrato(renovSplit.comprar, renovForm.precioUnitario);
-
   const handleCopyLink = async () => { await navigator.clipboard.writeText(accessUrl); toast.success('Link copiado'); };
   const handleWhatsApp = () => {
     const msg = encodeURIComponent(`Hola ${client.nombre}, te comparto tu acceso de Mundo Prana para ver tu seguimiento: ${accessUrl}`);
@@ -355,169 +299,6 @@ export default function ClientDetail() {
         <p className="page-subtitle">{client.email} · {client.telefono}</p>
       </div>
 
-      {/* FORMULARIO DE RENOVACIÓN */}
-      {renovando && (
-        <div className="glass-card p-5 mb-5 space-y-4 border-2 border-primary/30">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-semibold">Renovar plan</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Se creará un nuevo plan. El anterior quedará en el historial. Se asignarán <strong>{getRenovacionPuntos()} puntos</strong> automáticamente.
-              </p>
-            </div>
-            <Button size="sm" variant="ghost" onClick={() => setRenovando(false)}><X className="w-4 h-4" /></Button>
-          </div>
-
-          {saldoAFavorActivo > 0 && (
-            <div className="rounded-lg bg-amber-500/10 text-amber-800 text-sm px-3 py-2">
-              <strong>Saldo a favor: {saldoAFavorActivo} vianda(s)</strong> sin consumir en el contrato actual
-              {(balanceActivo?.ajusteManual || 0) > 0 && ` (incluye ${balanceActivo?.ajusteManual} de ajustes manuales)`}.
-              Si necesita {necesitaRenov || 0}, puede aplicar {renovSplit.aplicar}{ajustesRenov > 0 ? `, sumar ${ajustesRenov} de ajustes pendientes` : ''} y comprar {renovSplit.comprar} nuevas.
-              Ajustá cuánto aplicar según lo que acordaste con el cliente.
-            </div>
-          )}
-
-          {viandasPendientes > 0 && (
-            <label className="flex items-start gap-3 rounded-lg border-2 border-warning/60 bg-warning/10 px-3 py-2 text-sm cursor-pointer">
-              <input type="checkbox" className="mt-1 h-5 w-5 accent-[hsl(var(--primary))]" checked={sumarPendientes} onChange={e => setSumarPendientes(e.target.checked)} />
-              <span>
-                <strong>Sumar {viandasPendientes} vianda(s) de ajustes manuales pendientes</strong> al nuevo contrato.
-                Se descuentan de las viandas a comprar y quedan registradas en el historial de cada ajuste.
-              </span>
-            </label>
-          )}
-
-          {/* Cálculo del período: días hábiles → viandas necesarias → saldo → nuevas a comprar → importe */}
-          <div className="rounded-lg border-2 border-primary/60 bg-primary/5 p-3 space-y-2">
-            <p className="font-semibold">Cálculo del período {formatDateAR(renovForm.fechaInicio)} al {formatDateAR(renovForm.fechaFin)}</p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-center">
-              <CalcTile label="Días hábiles" value={String(habilesRenov.habiles)} />
-              <CalcTile label="Viandas necesarias" value={String(necesitaRenov)} />
-              <CalcTile label="Saldo a aplicar" value={String(renovSplit.aplicar)} />
-              <CalcTile label="Ajustes pendientes" value={String(ajustesRenov)} />
-              <CalcTile label="Nuevas a comprar" value={String(renovSplit.comprar)} strong />
-              <CalcTile label="Importe" value={formatCurrencyAR(totalRenov)} strong />
-            </div>
-            <p className="text-sm text-muted-foreground">
-              {habilesRenov.diasDelPeriodo} días {renovForm.modalidad === 'fijo' && renovForm.diasFijos.length < 5 ? 'de retiro' : 'de lunes a viernes'}
-              {' '}− {habilesRenov.feriados.length} feriado(s) − {habilesRenov.excluidas.length} día(s) excluido(s) = {habilesRenov.habiles} hábiles
-              {renovForm.modalidad === 'fijo' && ` × ${renovForm.unidadesPorRetiro || 1} por retiro`}.
-              {' '}Un día que es feriado y además está excluido se descuenta una sola vez.
-            </p>
-            {renovForm.modalidad === 'fijo' && renovForm.necesitaManual && Number(renovForm.necesita) !== necesariasCalc && (
-              <p className="text-sm">
-                Cargaste {renovForm.necesita} a mano; por días hábiles serían {necesariasCalc}.{' '}
-                <Button variant="outline" size="sm" className="h-9" onClick={() => setRenovForm({ ...renovForm, necesitaManual: false })}>Usar {necesariasCalc}</Button>
-              </p>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div>
-              <Label className="text-xs">{saldoAFavorActivo > 0 || ajustesRenov > 0 ? 'Viandas que necesita' : 'Cantidad contratada'}</Label>
-              <Input type="number" min={0} value={necesitaRenov} onChange={e => setRenovForm({ ...renovForm, necesita: Number(e.target.value), necesitaManual: true })} className="h-8 text-sm" />
-            </div>
-            {saldoAFavorActivo > 0 && (
-              <div>
-                <Label className="text-xs">Saldo a favor a aplicar (máx. {saldoAFavorActivo})</Label>
-                <Input type="number" min={0} max={saldoAFavorActivo} value={renovForm.saldoAplicado} onChange={e => setRenovForm({ ...renovForm, saldoAplicado: Math.max(0, Math.min(Number(e.target.value), saldoAFavorActivo)) })} className="h-8 text-sm" />
-              </div>
-            )}
-            {(saldoAFavorActivo > 0 || ajustesRenov > 0) && (
-              <div>
-                <Label className="text-xs">Viandas nuevas a comprar</Label>
-                <Input value={renovSplit.comprar} readOnly className="h-8 text-sm bg-muted" />
-              </div>
-            )}
-            <div>
-              <Label className="text-xs">Precio por vianda</Label>
-              <Input type="number" value={renovForm.precioUnitario} onChange={e => setRenovForm({ ...renovForm, precioUnitario: Number(e.target.value) })} className="h-8 text-sm" />
-            </div>
-            <div>
-              <Label className="text-xs">Total</Label>
-              <Input value={formatCurrencyAR(totalRenov)} readOnly className="h-8 text-sm bg-muted" />
-            </div>
-            <div>
-              <Label className="text-xs">Viandas por retiro</Label>
-              <Input type="number" value={renovForm.unidadesPorRetiro} onChange={e => setRenovForm({ ...renovForm, unidadesPorRetiro: Number(e.target.value) })} className="h-8 text-sm" />
-            </div>
-            <div>
-              <Label className="text-xs">Modalidad</Label>
-              <select className="w-full h-8 rounded-md border border-input bg-background px-2 text-sm" value={renovForm.modalidad} onChange={e => setRenovForm({ ...renovForm, modalidad: e.target.value as 'fijo' | 'flexible' })}>
-                <option value="fijo">Fijo</option>
-                <option value="flexible">Flexible</option>
-              </select>
-            </div>
-            <div>
-              <Label className="text-xs">Tipo de entrega</Label>
-              <select className="w-full h-8 rounded-md border border-input bg-background px-2 text-sm" value={renovForm.tipoEntrega} onChange={e => setRenovForm({ ...renovForm, tipoEntrega: e.target.value as 'retiro' | 'envio' })}>
-                <option value="retiro">Retiro</option>
-                <option value="envio">Envío</option>
-              </select>
-            </div>
-            {renovForm.tipoEntrega === 'envio' && (
-              <div>
-                <Label className="text-xs">Costo de envío ($)</Label>
-                <Input type="number" min={0} value={renovForm.costoEnvio} onChange={e => setRenovForm({ ...renovForm, costoEnvio: Number(e.target.value) })} className="h-8 text-sm" placeholder="Ej: 3500" />
-              </div>
-            )}
-            <div>
-              <Label className="text-xs">Fecha inicio</Label>
-              <Input type="date" value={renovForm.fechaInicio} onChange={e => setRenovForm({ ...renovForm, fechaInicio: e.target.value })} className="h-8 text-sm" />
-            </div>
-            <div>
-              <Label className="text-xs">Fecha fin</Label>
-              <Input type="date" value={renovForm.fechaFin} onChange={e => setRenovForm({ ...renovForm, fechaFin: e.target.value })} className="h-8 text-sm" />
-            </div>
-          </div>
-
-          {renovForm.modalidad === 'fijo' && (
-            <div>
-              <Label className="text-xs">Días de retiro</Label>
-              <div className="flex flex-wrap gap-3 mt-1">
-                {DAYS.map(day => (
-                  <label key={day.value} className="flex items-center gap-1.5 text-xs">
-                    <input type="checkbox" checked={renovForm.diasFijos.includes(day.value)}
-                      onChange={() => setRenovForm(prev => ({
-                        ...prev,
-                        diasFijos: prev.diasFijos.includes(day.value)
-                          ? prev.diasFijos.filter(d => d !== day.value)
-                          : [...prev.diasFijos, day.value]
-                      }))} />
-                    {day.label}
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {renovForm.modalidad === 'flexible' && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Cantidad semanal</Label>
-                <Input type="number" value={renovForm.cantidadSemanal} onChange={e => setRenovForm({ ...renovForm, cantidadSemanal: Number(e.target.value) })} className="h-8 text-sm" />
-              </div>
-              <div>
-                <Label className="text-xs">Hora límite</Label>
-                <Input type="time" value={renovForm.horaLimite} onChange={e => setRenovForm({ ...renovForm, horaLimite: e.target.value })} className="h-8 text-sm" />
-              </div>
-            </div>
-          )}
-
-          <div>
-            <Label className="text-xs">Observaciones</Label>
-            <Textarea value={renovForm.observaciones} onChange={e => setRenovForm({ ...renovForm, observaciones: e.target.value })} className="text-sm min-h-[50px]" placeholder="Observaciones para este período" />
-          </div>
-
-          <div className="flex gap-3">
-            <Button onClick={handleConfirmarRenovacion}>
-              <RefreshCw className="w-4 h-4 mr-2" />Confirmar renovación
-            </Button>
-            <Button variant="outline" onClick={() => setRenovando(false)}>Cancelar</Button>
-          </div>
-        </div>
-      )}
-
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-5 h-auto w-full sm:w-auto p-1.5 gap-1.5 border-2 border-border bg-card">
           <TabsTrigger value="consumos" className="h-12 flex-1 min-w-0 px-2 sm:px-3 sm:flex-none sm:min-w-[9rem] text-base gap-1.5 sm:gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"><CalendarCheck className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />Consumos</TabsTrigger>
@@ -527,9 +308,25 @@ export default function ClientDetail() {
 
         {/* CONSUMOS: carga del mes, ajustes y, al costado, contrato, fechas excluidas y acceso */}
         <TabsContent value="consumos" className="mt-0">
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] xl:grid-rows-[auto_1fr]">
-            <div className="space-y-5 min-w-0 xl:col-start-1 xl:row-start-1 xl:row-span-2">
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] xl:grid-rows-[auto_auto_1fr]">
+            {/* Días hábiles del mes y preparación del contrato: en celular, antes del calendario */}
+            <div className="min-w-0 xl:col-start-2 xl:row-start-1">
+              <ContractPlannerCard
+                ref={plannerRef}
+                mes={mes}
+                plans={clientPlans}
+                activePlan={plan}
+                feriados={feriados}
+                saldoDisponible={saldoAFavorActivo}
+                viandasPendientes={viandasPendientes}
+                onConfirm={confirmarContrato}
+              />
+            </div>
+
+            <div className="space-y-5 min-w-0 xl:col-start-1 xl:row-start-1 xl:row-span-3">
               <ClientConsumptionCalendar
+                mes={mes}
+                onMesChange={setMes}
                 client={client}
                 plans={clientPlans}
                 consumptions={consumptions}
@@ -540,14 +337,24 @@ export default function ClientDetail() {
               <ClientCreditNotes clientId={client.id} plans={clientPlans} activePlan={plan} onChange={notes => { void refreshAfterCredits(notes); }} />
             </div>
 
-            <div className="space-y-5 min-w-0 xl:col-start-2 xl:row-start-1">
-              {/* Resumen del contrato */}
+            <div className="space-y-5 min-w-0 xl:col-start-2 xl:row-start-2">
+              {/* Contrato vigente, con su período bien identificado */}
               <div className="glass-card p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold">Contrato activo</h3>
-                  {plan && !editingPlan && !renovando && (
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <h3 className="font-semibold">Contrato vigente</h3>
+                    {plan && (
+                      <p className="text-lg font-bold tabular-nums">{formatDateAR(plan.fechaInicio)} al {formatDateAR(plan.fechaFin)}</p>
+                    )}
+                    {plan && plan.fechaFin < todayISO() && (
+                      <span className="inline-block mt-1 text-xs font-semibold rounded-full bg-warning/20 text-foreground border border-warning px-2.5 py-1">
+                        Finalizó el {formatDateAR(plan.fechaFin)} · sin renovar
+                      </span>
+                    )}
+                  </div>
+                  {plan && !editingPlan && (
                     <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={openRenovar}>
+                      <Button variant="outline" size="sm" onClick={() => plannerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
                         <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Renovar
                       </Button>
                       <Button variant="outline" size="sm" onClick={() => setEditingPlan(true)}>
@@ -744,7 +551,7 @@ export default function ClientDetail() {
               </div>
             </div>
 
-            <div className="space-y-5 min-w-0 xl:col-start-2 xl:row-start-2 self-start">
+            <div className="space-y-5 min-w-0 xl:col-start-2 xl:row-start-3 self-start">
               {/* Fechas excluidas */}
               {plan && (
                 <div className="glass-card p-5 space-y-4">
@@ -792,15 +599,6 @@ export default function ClientDetail() {
           <ClientPointsPanel puntos={client.puntos} points={points} />
         </TabsContent>
       </Tabs>
-    </div>
-  );
-}
-
-function CalcTile({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
-  return (
-    <div className={`rounded-lg border-2 p-2 ${strong ? 'border-primary bg-primary/15' : 'border-border bg-card'}`}>
-      <p className="text-xs leading-tight text-muted-foreground">{label}</p>
-      <p className="text-lg font-bold tabular-nums">{value}</p>
     </div>
   );
 }
