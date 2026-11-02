@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   getCreditNotes, saveCreditNote, setCreditNoteAplicado, updateManualCredit, anularCreditNote, isPendingManualCredit,
 } from '@/lib/store';
-import { computePlanBalance, formatTimestampDateAR, todayISO } from '@/lib/consumo';
+import { formatTimestampDateAR } from '@/lib/consumo';
 import { formatCurrencyAR, formatDateAR } from '@/lib/business';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Plus, Minus, Check, Pencil, Ban, History, X, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { Consumption, CreditNote, CreditNoteTipo, Plan } from '@/types';
+import type { CreditNote, CreditNoteTipo, Plan } from '@/types';
 
 const TIPOS_DINERO: { value: CreditNoteTipo; label: string }[] = [
   { value: 'saldo_envio', label: 'Saldo de envío' },
@@ -31,12 +31,11 @@ interface Props {
   /** Contratos del cliente. */
   plans: Plan[];
   activePlan: Plan | null;
-  consumptions: Consumption[];
   /** Avisa a la ficha cuando cambian los ajustes (para releer contratos y saldos). */
   onChange?: (notes: CreditNote[]) => void;
 }
 
-export default function ClientCreditNotes({ clientId, plans, activePlan, consumptions, onChange }: Props) {
+export default function ClientCreditNotes({ clientId, plans, activePlan, onChange }: Props) {
   const [notes, setNotes] = useState<CreditNote[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -75,19 +74,14 @@ export default function ClientCreditNotes({ clientId, plans, activePlan, consump
   };
 
   const planById = (id?: string) => plans.find(p => p.id === id);
-  const today = todayISO();
 
   const viandas = notes.filter(n => n.tipo === 'vianda_favor');
   const dinero = notes.filter(n => n.tipo !== 'vianda_favor');
   const vigentes = viandas.filter(n => !n.anulado);
   const sum = (list: CreditNote[]) => list.reduce((a, n) => a + (n.cantidad || 0), 0);
 
-  const enContratoVigente = activePlan ? sum(vigentes.filter(n => n.planId === activePlan.id)) : 0;
   const pendientes = sum(vigentes.filter(isPendingManualCredit));
   const yaAplicados = sum(vigentes.filter(n => (n.planId && n.planId !== activePlan?.id) || (!n.planId && n.aplicado)));
-  const trasladado = activePlan?.saldoAnteriorAplicado || 0;
-  const origen = planById(activePlan?.saldoOrigenPlanId);
-  const balance = activePlan ? computePlanBalance(activePlan, consumptions, plans, today) : null;
 
   // Contratos para elegir: el vigente primero, después del más nuevo al más viejo
   const planOptions = [...plans].sort((a, b) =>
@@ -108,21 +102,20 @@ export default function ClientCreditNotes({ clientId, plans, activePlan, consump
         )}
       </div>
 
-      {/* Resumen: de dónde viene cada vianda a favor */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-        <SummaryTile label="Saldo trasladado" value={trasladado}
-          hint={trasladado > 0 && origen ? `del contrato ${rango(origen)}` : 'de meses anteriores'} />
-        <SummaryTile label="Ajustes manuales" value={enContratoVigente} tone="ok"
-          hint={activePlan ? 'suman al contrato vigente' : 'sin contrato vigente'} />
-        <SummaryTile label="Pendientes de aplicar" value={pendientes} tone={pendientes > 0 ? 'warn' : undefined}
-          hint="se suman al renovar" />
-        <SummaryTile label="Ya aplicados" value={yaAplicados} hint="en contratos anteriores" />
-      </div>
-      {balance && (
-        <p className="text-sm">
-          Disponible del contrato vigente: <strong className="text-base">{balance.disponible}</strong>
-          <span className="text-muted-foreground"> = {balance.compradas} compradas + {balance.saldoAnteriorAplicado} trasladadas + {balance.ajusteManual} de ajustes − {balance.consumidas + balance.ajusteInicial} usadas{balance.trasladado > 0 ? ` − ${balance.trasladado} pasadas al contrato siguiente` : ''}</span>
-        </p>
+      {/* Los totales están en el resumen del calendario; acá solo lo que no aparece allí */}
+      {(pendientes > 0 || yaAplicados > 0) && (
+        <div className="flex flex-wrap gap-2 text-sm">
+          {pendientes > 0 && (
+            <span className="rounded-full border-2 border-warning/70 bg-warning/10 px-3 py-1">
+              <strong>{pendientes}</strong> pendiente{pendientes === 1 ? '' : 's'} de aplicar (se suman al renovar)
+            </span>
+          )}
+          {yaAplicados > 0 && (
+            <span className="rounded-full border-2 border-border bg-muted/40 px-3 py-1">
+              <strong>{yaAplicados}</strong> ya aplicada{yaAplicados === 1 ? '' : 's'} en contratos anteriores
+            </span>
+          )}
+        </div>
       )}
 
       {mode === 'viandas' && (
@@ -278,17 +271,6 @@ export default function ClientCreditNotes({ clientId, plans, activePlan, consump
       {notes.length === 0 && mode === 'none' && !loadError && (
         <p className="text-sm text-muted-foreground">Sin ajustes manuales registrados.</p>
       )}
-    </div>
-  );
-}
-
-function SummaryTile({ label, value, hint, tone }: { label: string; value: number; hint: string; tone?: 'ok' | 'warn' }) {
-  const cls = tone === 'ok' ? 'border-primary/60 bg-primary/10' : tone === 'warn' ? 'border-warning/70 bg-warning/10' : 'border-border bg-muted/40';
-  return (
-    <div className={`rounded-lg border-2 p-3 ${cls}`}>
-      <p className="text-sm font-medium">{label}</p>
-      <p className="text-2xl font-bold tabular-nums leading-tight">{value}</p>
-      <p className="text-xs text-muted-foreground">{hint}</p>
     </div>
   );
 }
