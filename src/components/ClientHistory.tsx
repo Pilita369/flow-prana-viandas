@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { formatCurrencyAR, formatDateAR } from '@/lib/business';
 import { capFirst, computePlanBalance, isConsumed, monthKey, parseISODate, todayISO } from '@/lib/consumo';
-import type { Consumption, Plan } from '@/types';
+import type { Consumption, CreditNote, Plan } from '@/types';
+import type { PagoContrato } from '@/lib/pagos';
 
 /**
  * Historial completo del cliente en una sola vista:
@@ -15,6 +16,10 @@ import type { Consumption, Plan } from '@/types';
 interface Props {
   consumptions: Consumption[];
   plans: Plan[];
+  /** Ajustes manuales del cliente (se muestran bajo el contrato al que suman). */
+  creditNotes?: CreditNote[];
+  /** Pagos registrados del cliente. */
+  pagos?: PagoContrato[];
 }
 
 interface DayRow { fecha: string; total: number; notas: string[]; registros: number }
@@ -38,7 +43,7 @@ const monthLabel = (m: string) => {
 
 const consumed = (list: Consumption[]) => list.filter(c => isConsumed(c.status)).reduce((a, c) => a + (c.cantidad || 0), 0);
 
-export default function ClientHistory({ consumptions, plans }: Props) {
+export default function ClientHistory({ consumptions, plans, creditNotes = [], pagos = [] }: Props) {
   const today = todayISO();
   const sortedPlans = [...plans].sort((a, b) => b.fechaInicio.localeCompare(a.fechaInicio));
   const planIds = new Set(plans.map(p => p.id));
@@ -124,6 +129,7 @@ export default function ClientHistory({ consumptions, plans }: Props) {
                     {b.trasladadoDeMas > 0 && <span className="rounded-full bg-red-500/10 text-red-600 px-2.5 py-1">{b.trasladadoDeMas} trasladadas de más (conciliar)</span>}
                   </div>
                 )}
+                <Movimientos plan={p} plans={plans} creditNotes={creditNotes} pagos={pagos} />
                 {p.observaciones && <p className="text-sm text-muted-foreground whitespace-pre-line">{p.observaciones}</p>}
 
                 {months.length === 0
@@ -198,5 +204,36 @@ function Mini({ label, value }: { label: string; value: number }) {
       <p className="text-[11px] leading-tight text-muted-foreground">{label}</p>
       <p className="font-bold tabular-nums">{value}</p>
     </div>
+  );
+}
+
+const periodo = (p: Plan) => `${formatDateAR(p.fechaInicio)} al ${formatDateAR(p.fechaFin)}`;
+
+/** Movimientos de saldo (de dónde vino y a dónde fue), ajustes manuales y pagos de un contrato. */
+function Movimientos({ plan, plans, creditNotes, pagos }: { plan: Plan; plans: Plan[]; creditNotes: CreditNote[]; pagos: PagoContrato[] }) {
+  const origen = plan.saldoOrigenPlanId ? plans.find(x => x.id === plan.saldoOrigenPlanId) : undefined;
+  const destinos = plans.filter(x => x.saldoOrigenPlanId === plan.id && (x.saldoAnteriorAplicado || 0) > 0);
+  const ajustes = creditNotes.filter(n => n.tipo === 'vianda_favor' && n.planId === plan.id);
+  const pagosPlan = pagos.filter(x => x.planId === plan.id);
+  if (!origen && (plan.saldoAnteriorAplicado || 0) === 0 && destinos.length === 0 && ajustes.length === 0 && pagosPlan.length === 0) return null;
+  return (
+    <ul className="text-sm space-y-1 rounded-lg border-2 border-border px-3 py-2">
+      {(plan.saldoAnteriorAplicado || 0) > 0 && (
+        <li>Recibió <strong>{plan.saldoAnteriorAplicado}</strong> vianda(s) a favor {origen ? <>del contrato {periodo(origen)}</> : 'de un contrato anterior'}.</li>
+      )}
+      {destinos.map(d => (
+        <li key={d.id}>Trasladó <strong>{d.saldoAnteriorAplicado}</strong> vianda(s) al contrato {periodo(d)}.</li>
+      ))}
+      {ajustes.map(n => (
+        <li key={n.id} className={n.anulado ? 'line-through text-muted-foreground' : ''}>
+          Ajuste manual: +{n.cantidad} vianda(s){n.descripcion ? ` (${n.descripcion})` : ''}{n.anulado ? ' · anulado' : ''}
+        </li>
+      ))}
+      {pagosPlan.map(x => (
+        <li key={x.id} className={x.anulado ? 'line-through text-muted-foreground' : ''}>
+          Pago {formatDateAR(x.fecha)}: {formatCurrencyAR(x.monto)}{x.medio ? ` · ${x.medio}` : ''}{x.anulado ? ' · anulado' : ''}
+        </li>
+      ))}
+    </ul>
   );
 }

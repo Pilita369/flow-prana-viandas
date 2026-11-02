@@ -5,9 +5,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { formatCurrencyAR, formatDateAR, getSuggestedPrice } from '@/lib/business';
-import { capFirst, monthDays, planForMonth } from '@/lib/consumo';
 import {
-  LUNES_A_VIERNES, calcularPropuesta, contarDiasHabiles, excluidasEnPeriodo, fechasPropuestas, isExcluidaCliente,
+  LUNES_A_VIERNES, calcularPropuesta, excluidasEnPeriodo, fechasPropuestas,
 } from '@/lib/habiles';
 import type { DayOfWeek, DeliveryType, Plan } from '@/types';
 
@@ -45,6 +44,13 @@ interface Props {
   feriados: Set<string>;
   /** Saldo a favor del contrato vigente que todavía no se aplicó a otro contrato. */
   saldoDisponible: number;
+  /**
+   * true = el contrato vigente todavía no terminó: sus viandas pueden consumirse, así que el saldo es provisional.
+   * No se preselecciona y se vuelve a validar al confirmar.
+   */
+  saldoProvisional?: boolean;
+  /** Viandas que sobrarían al terminar el contrato vigente si consume todos los días que faltan. */
+  sobranteEstimado?: number;
   /** Viandas de ajustes manuales pendientes (sin contrato). */
   viandasPendientes: number;
   /** Guarda el contrato. Devuelve true si se guardó. */
@@ -69,12 +75,13 @@ function formDesde(plan: Plan | null) {
  * Tarjeta destacada: días hábiles del mes seleccionado y propuesta de contratación / renovación.
  * Cambiar los campos solo recalcula la propuesta; se guarda únicamente al confirmar.
  */
-const ContractPlannerCard = forwardRef<HTMLDivElement, Props>(function ContractPlannerCard(
-  { mes, plans, activePlan, feriados, saldoDisponible, viandasPendientes, onConfirm }, ref,
+const ContractPlannerCard = forwardRef<HTMLDetailsElement, Props>(function ContractPlannerCard(
+  { mes, plans, activePlan, feriados, saldoDisponible, saldoProvisional = false, sobranteEstimado = 0, viandasPendientes, onConfirm }, ref,
 ) {
   const [form, setForm] = useState(() => formDesde(activePlan));
   const [fechas, setFechas] = useState(() => fechasPropuestas(mes, activePlan));
-  const [aplicarElegido, setAplicarElegido] = useState<number | null>(null);
+  // Con saldo provisional no se aplica nada por defecto: lo decide quien prepara la renovación
+  const [aplicarElegido, setAplicarElegido] = useState<number | null>(saldoProvisional ? 0 : null);
   const [necesariasManual, setNecesariasManual] = useState<number | null>(null);
   const [sumarPendientes, setSumarPendientes] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -84,21 +91,10 @@ const ContractPlannerCard = forwardRef<HTMLDivElement, Props>(function ContractP
   // Al cambiar de mes (o de contrato vigente) se vuelve a proponer: es solo una propuesta, no se guarda nada
   useEffect(() => {
     setFechas(fechasPropuestas(mes, activePlan));
-    setAplicarElegido(null);
+    setAplicarElegido(saldoProvisional ? 0 : null);
     setNecesariasManual(null);
-  }, [mes, activePlan?.id, activePlan?.fechaFin]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mes, activePlan?.id, activePlan?.fechaFin, saldoProvisional]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setForm(formDesde(activePlan)); }, [activePlan?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Días hábiles del MES (mismas reglas que el calendario)
-  const [y, m] = mes.split('-').map(Number);
-  const days = monthDays(y, m - 1);
-  const planMes = planForMonth(plans, y, m - 1);
-  const habilesMes = contarDiasHabiles(days[0], days[days.length - 1], {
-    diasFijos: planMes?.modalidad === 'fijo' ? planMes.diasFijos : undefined,
-    feriados,
-    excluidas: days.filter(d => isExcluidaCliente(plans, d)),
-  });
-  const mesLabel = capFirst(new Date(y, m - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }));
 
   // Propuesta para el PERÍODO elegido
   const fijo = form.modalidad === 'fijo';
@@ -143,7 +139,7 @@ const ContractPlannerCard = forwardRef<HTMLDivElement, Props>(function ContractP
         sumarPendientes: sumarPendientes && viandasPendientes > 0,
         diasServicio: p.servicio.habiles,
       });
-      if (ok) { setAplicarElegido(null); setNecesariasManual(null); setForm(f => ({ ...f, observaciones: '' })); }
+      if (ok) { setAplicarElegido(saldoProvisional ? 0 : null); setNecesariasManual(null); setForm(f => ({ ...f, observaciones: '' })); }
     } finally {
       busy.current = false;
       setSaving(false);
@@ -151,24 +147,14 @@ const ContractPlannerCard = forwardRef<HTMLDivElement, Props>(function ContractP
   };
 
   return (
-    <div ref={ref} className="glass-card border-2 border-primary/70 overflow-hidden scroll-mt-24">
-      {/* Días hábiles del mes seleccionado */}
-      <div className="bg-primary/15 px-4 sm:px-5 py-4 border-b-2 border-primary/40">
-        <p className="text-sm font-semibold uppercase tracking-wide text-primary">{mesLabel}</p>
-        <p className="text-3xl sm:text-4xl font-bold tabular-nums leading-tight" data-testid="habiles-mes">
-          {habilesMes.habiles} <span className="text-xl sm:text-2xl font-semibold uppercase">días hábiles</span>
-        </p>
-        <p className="text-sm text-muted-foreground mt-1">
-          {habilesMes.diasDelPeriodo} de lunes a viernes
-          {habilesMes.feriados.length > 0 && ` · ${habilesMes.feriados.length} feriado${habilesMes.feriados.length > 1 ? 's' : ''} (${habilesMes.feriados.map(d => d.slice(8)).join(', ')})`}
-          {habilesMes.excluidas.length > 0 && ` · ${habilesMes.excluidas.length} excluido${habilesMes.excluidas.length > 1 ? 's' : ''} (${habilesMes.excluidas.map(d => d.slice(8)).join(', ')})`}
-        </p>
-      </div>
-
+    <details ref={ref} className="group/plan glass-card overflow-hidden scroll-mt-24">
+      <summary className="cursor-pointer list-none flex items-center justify-between gap-3 px-4 sm:px-5 min-h-[3.5rem] font-semibold text-lg">
+        {activePlan ? 'Preparar próximo mes' : 'Preparar contratación'}
+        <ChevronDown className="w-5 h-5 shrink-0 group-open/plan:rotate-180 transition-transform" />
+      </summary>
       {/* Propuesta de contratación del período */}
-      <div className="p-4 sm:p-5 space-y-4">
-        <div>
-          <h3 className="font-semibold text-lg">{activePlan ? 'Preparar renovación' : 'Preparar contratación'}</h3>
+      <div className="px-4 sm:px-5 pb-5 pt-1 space-y-4 border-t-2 border-border">
+        <div className="pt-3">
           <p className="text-sm text-muted-foreground">Es una propuesta: no se guarda nada hasta que tocás “{accion}”.</p>
         </div>
 
@@ -212,11 +198,18 @@ const ContractPlannerCard = forwardRef<HTMLDivElement, Props>(function ContractP
         <div className="rounded-lg border-2 border-border p-3 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <span>
-              <span className="block text-sm text-muted-foreground">Saldo a favor disponible</span>
+              <span className="block text-sm text-muted-foreground">{saldoProvisional ? 'Disponible hoy en el contrato vigente' : 'Saldo a favor disponible'}</span>
               <span className="block text-sm text-muted-foreground">{activePlan ? `contrato ${formatDateAR(activePlan.fechaInicio)} al ${formatDateAR(activePlan.fechaFin)}` : 'sin contrato vigente'}</span>
             </span>
             <strong className="text-2xl tabular-nums" data-testid="saldo-disponible">{saldoDisponible}</strong>
           </div>
+          {saldoProvisional && saldoDisponible > 0 && (
+            <p className="text-sm rounded-md border-2 border-warning/60 bg-warning/10 px-3 py-2" data-testid="saldo-provisional">
+              <strong>Saldo provisional:</strong> el contrato vigente termina el {activePlan ? formatDateAR(activePlan.fechaFin) : ''} y estas viandas todavía
+              pueden consumirse. Si consume todos los días que faltan, sobrarían <strong>{sobranteEstimado}</strong>.
+              No se aplica nada por defecto; al confirmar se vuelve a controlar el saldo real.
+            </p>
+          )}
           {saldoDisponible > 0 && (
             <div className="flex items-center justify-between gap-3">
               <Label htmlFor="plan-aplicar">Aplicar a este contrato (máx. {p.maxAplicar})</Label>
@@ -316,7 +309,7 @@ const ContractPlannerCard = forwardRef<HTMLDivElement, Props>(function ContractP
           {saving ? 'Guardando…' : accion}
         </Button>
       </div>
-    </div>
+    </details>
   );
 });
 

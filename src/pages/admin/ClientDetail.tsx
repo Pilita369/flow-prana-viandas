@@ -12,18 +12,22 @@ import {
   updatePlan, loadPlans, createPlan,
   renovarPlan, getCreditNotes, assignPendingManualCredits, isPendingManualCredit,
 } from '@/lib/store';
-import { computePlanBalance, todayISO, todayLabelAR } from '@/lib/consumo';
+import { addDaysISO, computePlanBalance, getNextPlan, todayISO, todayLabelAR } from '@/lib/consumo';
 import ClientHistory from '@/components/ClientHistory';
 import ClientPointsPanel from '@/components/ClientPointsPanel';
 import ClientConsumptionCalendar from '@/components/ClientConsumptionCalendar';
 import { useRefreshOnReturn } from '@/hooks/useConsumptionSaver';
-import { formatCurrencyAR, formatDateAR, getDiasEstimadosFromPlan, calculateFixedPlanEstimatedEndDate, calcularTotalContrato } from '@/lib/business';
+import { formatCurrencyAR, formatDateAR, calcularTotalContrato } from '@/lib/business';
 import { toast } from 'sonner';
 import { useFeriados } from '@/lib/feriados';
 import { contarDiasHabiles, viandasNecesarias } from '@/lib/habiles';
 import type { Client, Plan, Consumption, PointTransaction, DayOfWeek, CreditNote } from '@/types';
 import ClientCreditNotes from '@/components/ClientCreditNotes';
 import ContractPlannerCard, { type ContratoConfirmado } from '@/components/ContractPlannerCard';
+import MonthWorkdaysCard from '@/components/MonthWorkdaysCard';
+import ActiveContractSummary from '@/components/ActiveContractSummary';
+import { getPagosCliente, type PagoContrato } from '@/lib/pagos';
+import { estimarCobertura } from '@/lib/contrato';
 
 const DAYS: { value: DayOfWeek; label: string }[] = [
   { value: 'lunes', label: 'Lunes' },
@@ -79,7 +83,12 @@ export default function ClientDetail() {
   const { feriados } = useFeriados();
   // Mes que se ve en el calendario: lo sigue la tarjeta de días hábiles
   const [mes, setMes] = useState(todayISO().slice(0, 7));
-  const plannerRef = useRef<HTMLDivElement>(null);
+  const plannerRef = useRef<HTMLDetailsElement>(null);
+  const [pagos, setPagos] = useState<PagoContrato[]>([]);
+  const refreshPagos = async () => {
+    if (!id) return;
+    try { setPagos(await getPagosCliente(id)); } catch (e) { console.error('No se pudieron leer los pagos:', e); }
+  };
 
   const load = async () => {
     if (!id) return;
@@ -98,6 +107,7 @@ export default function ClientDetail() {
       setClientPlans(allPlans);
       setPoints(clientPoints);
       setCreditNotes(await getCreditNotes(id).catch(() => []));
+      await refreshPagos();
 
       if (activePlan) {
         setPlanEdit({
@@ -254,10 +264,12 @@ export default function ClientDetail() {
   if (!client) return null;
 
   const accessUrl = `${window.location.origin}/cliente/${client.accessLink}`;
-  const diasEstimados = getDiasEstimadosFromPlan(plan);
-  const fechaEstimadaFin = plan?.modalidad === 'fijo'
-    ? calculateFixedPlanEstimatedEndDate(plan.fechaInicio, diasEstimados, plan.diasFijos || [], plan.fechasExcluidas || [])
-    : plan?.fechaFin || '';
+  // Saldo para el próximo mes: provisional mientras el contrato vigente no terminó (sus viandas pueden consumirse)
+  const saldoProvisional = !!plan && plan.fechaFin >= todayISO() && !getNextPlan(clientPlans, plan);
+  const ultimoRegistro = plan ? consumptions.filter(c => c.planId === plan.id).map(c => c.fecha).sort().pop() : undefined;
+  const sobranteEstimado = plan && balanceActivo
+    ? estimarCobertura(plan, balanceActivo.disponible, ultimoRegistro ? addDaysISO(ultimoRegistro, 1) : plan.fechaInicio, feriados)?.sobrantes ?? 0
+    : 0;
 
   const totalEditado = calcularTotalContrato(planEdit.cantidadContratada, planEdit.precioUnitario);
   const habilesEdit = planEdit.modalidad === 'fijo' && plan
@@ -308,22 +320,13 @@ export default function ClientDetail() {
 
         {/* CONSUMOS: carga del mes, ajustes y, al costado, contrato, fechas excluidas y acceso */}
         <TabsContent value="consumos" className="mt-0">
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] xl:grid-rows-[auto_auto_1fr]">
-            {/* Días hábiles del mes y preparación del contrato: en celular, antes del calendario */}
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] xl:grid-rows-[auto_auto_auto_1fr]">
+            {/* Días hábiles del mes: en celular, antes del calendario */}
             <div className="min-w-0 xl:col-start-2 xl:row-start-1">
-              <ContractPlannerCard
-                ref={plannerRef}
-                mes={mes}
-                plans={clientPlans}
-                activePlan={plan}
-                feriados={feriados}
-                saldoDisponible={saldoAFavorActivo}
-                viandasPendientes={viandasPendientes}
-                onConfirm={confirmarContrato}
-              />
+              <MonthWorkdaysCard mes={mes} plans={clientPlans} feriados={feriados} />
             </div>
 
-            <div className="space-y-5 min-w-0 xl:col-start-1 xl:row-start-1 xl:row-span-3">
+            <div className="space-y-5 min-w-0 xl:col-start-1 xl:row-start-1 xl:row-span-4">
               <ClientConsumptionCalendar
                 mes={mes}
                 onMesChange={setMes}
@@ -354,7 +357,7 @@ export default function ClientDetail() {
                   </div>
                   {plan && !editingPlan && (
                     <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => plannerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                      <Button variant="outline" size="sm" onClick={() => { if (plannerRef.current) { plannerRef.current.open = true; plannerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }}>
                         <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Renovar
                       </Button>
                       <Button variant="outline" size="sm" onClick={() => setEditingPlan(true)}>
@@ -486,63 +489,23 @@ export default function ClientDetail() {
                   ) : (
                     /* VISTA NORMAL */
                     <>
+                      <ActiveContractSummary
+                        client={client}
+                        plan={plan}
+                        plans={clientPlans}
+                        consumptions={consumptions}
+                        feriados={feriados}
+                        creditNotes={creditNotes}
+                        pagos={pagos}
+                        onPagosChange={refreshPagos}
+                      />
                       <div className="flex flex-wrap gap-2">
                         <Badge variant="secondary">{plan.modalidad}</Badge>
                         <Badge variant="outline">{plan.tipoEntrega}</Badge>
-                        <Badge variant="outline">{plan.unidadesPorRetiro} por retiro</Badge>
-                      </div>
-                      <div className="grid grid-cols-2 gap-3 text-sm">
-                        <div><span className="text-muted-foreground">Precio unitario:</span> <strong>{formatCurrencyAR(plan.precioUnitario)}</strong></div>
-                        {plan.tipoEntrega === 'envio' && (
-                          <div><span className="text-muted-foreground">Costo de envío:</span> <strong>{plan.costoEnvio ? formatCurrencyAR(plan.costoEnvio) : 'No definido'}</strong></div>
-                        )}
-                        <div className="col-span-2">
-                          {(() => {
-                            // Solo ajustes en dinero: las viandas a favor ya suman al saldo de viandas
-                            const pendingNotes = creditNotes.filter(n => !n.aplicado && !n.anulado && (n.tipo === 'saldo_envio' || n.tipo === 'descuento'));
-                            const totalAjustes = pendingNotes.reduce((acc, n) => acc + (n.monto || 0), 0);
-                            const envio = plan.tipoEntrega === 'envio' ? (plan.costoEnvio || 0) : 0;
-                            const totalNeto = plan.totalCalculado + envio - totalAjustes;
-
-                            if (totalAjustes > 0) {
-                              return (
-                                <div className="rounded-lg bg-muted/40 border border-border px-3 py-2 space-y-1 text-sm">
-                                  <div className="flex justify-between text-muted-foreground">
-                                    <span>Viandas ({plan.cantidadContratada} × {formatCurrencyAR(plan.precioUnitario)})</span>
-                                    <span>{formatCurrencyAR(plan.totalCalculado)}</span>
-                                  </div>
-                                  {envio > 0 && (
-                                    <div className="flex justify-between text-muted-foreground">
-                                      <span>Envío</span>
-                                      <span>{formatCurrencyAR(envio)}</span>
-                                    </div>
-                                  )}
-                                  <div className="flex justify-between text-green-700">
-                                    <span>Ajustes a favor ({pendingNotes.length})</span>
-                                    <span>− {formatCurrencyAR(totalAjustes)}</span>
-                                  </div>
-                                  <div className="flex justify-between font-semibold border-t border-border pt-1 mt-1">
-                                    <span>Total a pagar</span>
-                                    <span>{formatCurrencyAR(totalNeto)}</span>
-                                  </div>
-                                </div>
-                              );
-                            }
-                            return (
-                              <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">Total:</span>
-                                <strong>{formatCurrencyAR(plan.totalCalculado + envio)}</strong>
-                              </div>
-                            );
-                          })()}
-                        </div>
-                        <div><span className="text-muted-foreground">Inicio:</span> <strong>{formatDateAR(plan.fechaInicio)}</strong></div>
-                        <div><span className="text-muted-foreground">Fin estimada:</span> <strong>{fechaEstimadaFin ? formatDateAR(fechaEstimadaFin) : '-'}</strong></div>
-                        <div><span className="text-muted-foreground">Días estimados:</span> <strong>{diasEstimados}</strong></div>
-                        <div><span className="text-muted-foreground">Viandas por día:</span> <strong>{plan.unidadesPorRetiro}</strong></div>
+                        <Badge variant="outline">{plan.unidadesPorRetiro} por día</Badge>
                       </div>
                       {plan.diasFijos?.length ? <p className="text-sm text-muted-foreground"><strong>Días fijos:</strong> {plan.diasFijos.join(', ')}</p> : null}
-                      {plan.observaciones ? <p className="text-sm text-muted-foreground"><strong>Observaciones:</strong> {plan.observaciones}</p> : null}
+                      {plan.observaciones ? <p className="text-sm text-muted-foreground whitespace-pre-line"><strong>Observaciones:</strong> {plan.observaciones}</p> : null}
                     </>
                   )
                 ) : (
@@ -551,7 +514,23 @@ export default function ClientDetail() {
               </div>
             </div>
 
-            <div className="space-y-5 min-w-0 xl:col-start-2 xl:row-start-3 self-start">
+            {/* Preparar el próximo mes: cerrado por defecto, debajo del contrato vigente */}
+            <div className="min-w-0 xl:col-start-2 xl:row-start-3">
+              <ContractPlannerCard
+                ref={plannerRef}
+                mes={plan && plan.fechaFin.slice(0, 7) >= mes ? addDaysISO(plan.fechaFin, 1).slice(0, 7) : mes}
+                plans={clientPlans}
+                activePlan={plan}
+                feriados={feriados}
+                saldoDisponible={saldoAFavorActivo}
+                saldoProvisional={saldoProvisional}
+                sobranteEstimado={sobranteEstimado}
+                viandasPendientes={viandasPendientes}
+                onConfirm={confirmarContrato}
+              />
+            </div>
+
+            <div className="space-y-5 min-w-0 xl:col-start-2 xl:row-start-4 self-start">
               {/* Fechas excluidas */}
               {plan && (
                 <div className="glass-card p-5 space-y-4">
@@ -591,7 +570,7 @@ export default function ClientDetail() {
 
         {/* HISTORIAL: todo lo registrado, por contrato y por mes */}
         <TabsContent value="historial" className="mt-0">
-          <ClientHistory consumptions={consumptions} plans={clientPlans} />
+          <ClientHistory consumptions={consumptions} plans={clientPlans} creditNotes={creditNotes} pagos={pagos} />
         </TabsContent>
 
         {/* PUNTOS */}

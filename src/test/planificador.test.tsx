@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import ContractPlannerCard from '@/components/ContractPlannerCard';
+import ContractPlannerCard, { type ContratoConfirmado } from '@/components/ContractPlannerCard';
+import MonthWorkdaysCard from '@/components/MonthWorkdaysCard';
 import { calcularPropuesta, fechasPropuestas, ultimoDiaDelMes } from '@/lib/habiles';
 import type { Plan } from '@/types';
 
@@ -53,11 +54,18 @@ describe('tarjeta de días hábiles y contratación', () => {
     plans: [octubre], activePlan: octubre, feriados: new Set<string>(), saldoDisponible: 11, viandasPendientes: 0,
   };
 
-  it('el mes sigue al calendario y cambiar campos no guarda nada', () => {
-    const onConfirm = vi.fn(async () => true);
-    const { rerender } = render(<ContractPlannerCard {...props} mes="2026-11" onConfirm={onConfirm} />);
+  it('la tarjeta del mes sigue al calendario', () => {
+    const { rerender } = render(<MonthWorkdaysCard mes="2026-11" plans={[octubre]} feriados={new Set()} />);
     expect(screen.getByText(/Noviembre de 2026/i)).toBeInTheDocument();
     expect(screen.getByTestId('habiles-mes').textContent).toMatch(/^19/);
+    rerender(<MonthWorkdaysCard mes="2026-12" plans={[octubre]} feriados={new Set()} />);
+    expect(screen.getByTestId('habiles-mes').textContent).toMatch(/^23/);
+  });
+
+  it('cambiar campos o el mes no guarda nada', () => {
+    const onConfirm = vi.fn(async (_c: ContratoConfirmado) => true);
+    const { rerender } = render(<ContractPlannerCard {...props} mes="2026-11" onConfirm={onConfirm} />);
+    expect(screen.getByText('Preparar próximo mes')).toBeInTheDocument();
     expect(screen.getByTestId('dias-servicio').textContent).toBe('19');
     expect(screen.getByTestId('comprar').textContent).toBe('8');
 
@@ -68,19 +76,16 @@ describe('tarjeta de días hábiles y contratación', () => {
     expect(screen.getByTestId('dias-servicio').textContent).toBe('9');
     expect(screen.getByTestId('necesarias').textContent).toBe('18');
     expect(screen.getByTestId('comprar').textContent).toBe('7');
-    expect(screen.getByTestId('habiles-mes').textContent).toMatch(/^19/); // el mes no cambia con el período
     expect(onConfirm).not.toHaveBeenCalled();
 
     rerender(<ContractPlannerCard {...props} mes="2026-12" onConfirm={onConfirm} />);
-    expect(screen.getByText(/Diciembre de 2026/i)).toBeInTheDocument();
-    expect(screen.getByTestId('habiles-mes').textContent).toMatch(/^23/);
     expect((screen.getByLabelText('Fin') as HTMLInputElement).value).toBe('2026-12-31');
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
   it('al confirmar se guarda una sola vez, aunque se toque dos veces', async () => {
     let resolver: (v: boolean) => void = () => {};
-    const onConfirm = vi.fn(() => new Promise<boolean>(r => { resolver = r; }));
+    const onConfirm = vi.fn((_c: ContratoConfirmado) => new Promise<boolean>(r => { resolver = r; }));
     render(<ContractPlannerCard {...props} mes="2026-11" onConfirm={onConfirm} />);
     const boton = screen.getByRole('button', { name: /Confirmar renovación/ });
     fireEvent.click(boton);
@@ -96,6 +101,15 @@ describe('tarjeta de días hábiles y contratación', () => {
   it('sin contrato vigente ofrece crear el contrato, sin saldo', () => {
     render(<ContractPlannerCard {...props} activePlan={null} plans={[]} saldoDisponible={0} mes="2026-11" onConfirm={vi.fn(async () => true)} />);
     expect(screen.getByRole('button', { name: /Crear contrato/ })).toBeInTheDocument();
-    expect(screen.getByTestId('habiles-mes').textContent).toMatch(/^21/);
+    expect(screen.getByText('Preparar contratación')).toBeInTheDocument();
+  });
+
+  it('con el contrato vigente en curso, el saldo es provisional y no se aplica por defecto', () => {
+    const onConfirm = vi.fn(async (_c: ContratoConfirmado) => true);
+    render(<ContractPlannerCard {...props} saldoDisponible={19} saldoProvisional sobranteEstimado={0} mes="2026-12" onConfirm={onConfirm} />);
+    expect(screen.getByTestId('saldo-provisional')).toBeInTheDocument();
+    expect((screen.getByLabelText(/Aplicar a este contrato/) as HTMLInputElement).value).toBe('0');
+    fireEvent.click(screen.getByRole('button', { name: /Confirmar renovación/ }));
+    expect(onConfirm.mock.calls[0][0]).toMatchObject({ aplicar: 0 });
   });
 });
