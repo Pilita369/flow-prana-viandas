@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent } from '@/components/ui/popover';
 import ConsumptionCellEditor from '@/components/ConsumptionCellEditor';
 import CarryOverDialog from '@/components/CarryOverDialog';
+import ConciliarSaldoDialog from '@/components/ConciliarSaldoDialog';
 import { loadClients, loadPlans, loadPlansOrThrow, loadConsumptionsOrThrow } from '@/lib/store';
 import { formatDateAR } from '@/lib/business';
 import { useFeriados } from '@/lib/feriados';
@@ -412,7 +413,19 @@ export default function DailyConsumptions() {
         </>
       )}
 
-      {carry && (
+      {carry && carry.conciliacion && (
+        <ConciliarSaldoDialog
+          open
+          onOpenChange={open => { if (!open) setCarry(null); }}
+          clientName={fullName(carry.client)}
+          fromPlan={carry.from}
+          toPlan={plans.find(p => p.saldoOrigenPlanId === carry.from.id) || carry.to}
+          plans={plansByClient.get(carry.client.id) || []}
+          consumptions={consByClient.get(carry.client.id) || []}
+          onDone={async () => { setCarry(null); setPlans(await loadPlans()); }}
+        />
+      )}
+      {carry && !carry.conciliacion && (
         <CarryOverDialog
           open={!!carry}
           onOpenChange={open => { if (!open) setCarry(null); }}

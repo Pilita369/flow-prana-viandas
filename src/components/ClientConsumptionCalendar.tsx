@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent } from '@/components/ui/popover';
 import ConsumptionCellEditor from '@/components/ConsumptionCellEditor';
 import ContractRecalcDialog, { type RecalcItem } from '@/components/ContractRecalcDialog';
+import { diferenciaDeTraslado } from '@/components/ContractPeriodParts';
 import { ConsumptionLegend, DayMarks, SaveIndicator, TODAY_CLASS, dayStatusClass, dayTitle, dayToneClass, describeDay } from '@/components/ConsumptionShared';
 import { cellKey, prepararGuardado, useConsumptionSaver, useRefreshOnReturn } from '@/hooks/useConsumptionSaver';
 import { formatCurrencyAR, formatDateAR } from '@/lib/business';
@@ -40,6 +41,8 @@ interface Props {
   onMesChange?: (mes: string) => void;
   /** Contrato del período seleccionado (lo elige la ficha). null = el mes no tiene contrato. */
   planPeriodo?: Plan | null;
+  /** Abrir "Conciliar saldo" cuando una corrección deja distinto lo trasladado y el saldo al cierre. */
+  onConciliar?: (from: Plan, to: Plan) => void;
 }
 
 function shiftMonth(mes: string, delta: number): string {
@@ -53,7 +56,7 @@ function shiftMonth(mes: string, delta: number): string {
  * - Modo "Registrar consumos": se toca cada fecha y se elige 0, 1, 2 o más viandas (misma función que la planilla general).
  * - Modo "Feriados y días excluidos": se toca una fecha para marcarla o desmarcarla. No crea ni borra consumos.
  */
-export default function ClientConsumptionCalendar({ client, plans, consumptions, onConsumptionsChange, onPlansChange, viandasPendientes = 0, mes: mesProp, onMesChange, planPeriodo }: Props) {
+export default function ClientConsumptionCalendar({ client, plans, consumptions, onConsumptionsChange, onPlansChange, viandasPendientes = 0, mes: mesProp, onMesChange, planPeriodo, onConciliar }: Props) {
   const today = todayISO();
   const [mesLocal, setMesLocal] = useState(today.slice(0, 7));
   const mes = mesProp ?? mesLocal;
@@ -91,6 +94,19 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
         .sort((a, b) => b.fecha.localeCompare(a.fecha));
       consRef.current = next;
       onConsumptionsChange(next);
+      // Corrección en un período con saldo ya trasladado: ofrecer conciliar de inmediato
+      const origen = plans.find(p => p.id === (rows[0]?.planId || planId));
+      if (latest && origen) {
+        const bo = computePlanBalance(origen, next, plans, today);
+        const dif = diferenciaDeTraslado(origen, plans, bo);
+        if (dif) {
+          toast.warning(
+            `Con esta corrección, el contrato ${formatDateAR(origen.fechaInicio)} al ${formatDateAR(origen.fechaFin)} cierra con ${dif.sobrante} a favor y se trasladaron ${dif.trasladado}.`,
+            onConciliar ? { duration: 20000, action: { label: 'Conciliar saldo', onClick: () => onConciliar(origen, dif.destino) } } : { duration: 20000 },
+          );
+          return;
+        }
+      }
       if (!latest || cantidad === null || cantidad <= 0) return;
       const plan = plans.find(p => p.id === (rows[0]?.planId || planId));
       if (plan) {

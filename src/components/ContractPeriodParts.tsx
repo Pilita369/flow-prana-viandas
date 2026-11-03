@@ -18,7 +18,8 @@ function Dato({ label, value, strong, testId }: { label: string; value: string; 
 const corto = (iso: string) => formatDateAR(iso).slice(0, 5);
 
 /** Cierre de un contrato terminado: cantidades históricas tal como quedaron, sin recalcular. */
-export function ContractCloseout({ plan, plans, balance }: { plan: Plan; plans: Plan[]; balance: PlanBalance }) {
+export function ContractCloseout({ plan, plans, balance, onConciliar }: { plan: Plan; plans: Plan[]; balance: PlanBalance; onConciliar?: (destino: Plan) => void }) {
+  const dif = diferenciaDeTraslado(plan, plans, balance);
   const destinos = plans.filter(p => p.saldoOrigenPlanId === plan.id && (p.saldoAnteriorAplicado || 0) > 0);
   const origen = plan.saldoOrigenPlanId ? plans.find(p => p.id === plan.saldoOrigenPlanId) : undefined;
   // De lo comprado + recibido, lo que quedó sin consumir (los días en 0 no restan nada)
@@ -45,7 +46,15 @@ export function ContractCloseout({ plan, plans, balance }: { plan: Plan; plans: 
         </p>
       ))}
       {balance.excedido > 0 && <p className="text-sm text-destructive">Se consumieron {balance.excedido} más de las disponibles.</p>}
-      {balance.trasladadoDeMas > 0 && <p className="text-sm text-destructive" data-testid="cierre-de-mas">Se trasladaron {balance.trasladadoDeMas} más de lo que sobró: falta conciliar.</p>}
+      {dif && (
+        <div className="rounded-lg border-2 border-warning bg-warning/10 px-3 py-2 space-y-2" data-testid="cierre-de-mas">
+          <p className="text-sm">
+            {dif.diferencia > 0 ? `Se trasladaron ${dif.diferencia} más de lo que sobró` : `Quedan ${-dif.diferencia} a favor sin trasladar`}:
+            trasladadas {dif.trasladado} → {dif.sobrante} al conciliar.
+          </p>
+          {onConciliar && <Button className="h-11" onClick={() => onConciliar(dif.destino)}>Conciliar saldo</Button>}
+        </div>
+      )}
       <p className="text-xs text-muted-foreground">Los días cargados en 0 son días sin consumo: no cambian lo comprado ni el importe.</p>
     </div>
   );
@@ -83,9 +92,21 @@ export function QuantityReview({ plan, balance, servicio, necesarias, onConfirm 
         {' '}− {balance.saldoAnteriorAplicado} trasladadas{balance.ajusteManual > 0 && ` − ${balance.ajusteManual} de ajustes`}
         {' '}= <strong data-testid="revision-comprar">{comprar} a comprar</strong>.
       </p>
+      {(() => {
+        const total = plan.cantidadContratada + balance.saldoAnteriorAplicado + balance.ajusteManual;
+        const falta = necesarias - total;
+        return (
+          <p data-testid="cobertura-necesarias">
+            Para usar: {plan.cantidadContratada} compradas + {balance.saldoAnteriorAplicado} trasladadas{balance.ajusteManual > 0 ? ` + ${balance.ajusteManual} de ajustes` : ''} = <strong>{total}</strong> de {necesarias} necesarias.{' '}
+            {falta > 0
+              ? <strong data-testid="falta-cubrir">Falta cubrir {falta} vianda{falta === 1 ? '' : 's'}.</strong>
+              : falta < 0 ? <>Sobran {-falta}.</> : <>Cubre todo el período.</>}
+          </p>
+        );
+      })()}
       <p>
         Contratadas: <strong>{plan.cantidadContratada}</strong>.{' '}
-        {diff === 0 ? 'El cálculo coincide.' : `El cálculo da ${diff > 0 ? '+' : ''}${diff}.`} Revisalo y confirmalo vos: no se cambia nada solo.
+        {diff === 0 ? 'El cálculo coincide.' : `El cálculo da ${diff > 0 ? '+' : ''}${diff}.`} Decidí vos cómo resolverlo: no se cambia nada solo.
       </p>
       {diff !== 0 && onConfirm && (
         <Button variant="outline" className="h-11" disabled={saving} onClick={confirmar}>
@@ -127,9 +148,12 @@ export function diferenciaDeTraslado(plan: Plan, plans: Plan[], balance: PlanBal
   return { destino, sobrante, trasladado, diferencia: trasladado - sobrante };
 }
 
-/** Aviso de conciliación: no cambia nada solo; ofrece conciliar con confirmación. */
-export function TrasladoAConciliar({ plan, plans, balance, onConciliar }: {
-  plan: Plan; plans: Plan[]; balance: PlanBalance; onConciliar: (destino: Plan, sobrante: number) => void;
+/** Aviso de conciliación con la acción "Conciliar saldo": muestra el antes y el después; no cambia nada solo. */
+export function TrasladoAConciliar({ plan, plans, balance, destinoBalance, onConciliar }: {
+  plan: Plan; plans: Plan[]; balance: PlanBalance;
+  /** Saldo actual del contrato destino (para mostrar su disponible antes y después). */
+  destinoBalance?: PlanBalance;
+  onConciliar: (destino: Plan, sobrante: number) => void;
 }) {
   const d = diferenciaDeTraslado(plan, plans, balance);
   if (!d) return null;
@@ -145,8 +169,12 @@ export function TrasladoAConciliar({ plan, plans, balance, onConciliar }: {
       <p className="text-sm font-semibold" data-testid="conciliar-diferencia">
         {deMas ? `${d.diferencia} vianda(s) trasladada(s) de más` : `${-d.diferencia} vianda(s) a favor sin trasladar`}
       </p>
-      <p className="text-xs text-muted-foreground">Nada se cambia solo. Conciliar ajusta solo lo trasladado; no toca compras, precios ni pagos.</p>
-      <Button variant="outline" className="h-11" onClick={() => onConciliar(d.destino, d.sobrante)}>Revisar y conciliar</Button>
+      <ul className="text-sm rounded-lg border-2 border-border px-3 py-2 space-y-0.5" data-testid="conciliar-antes-despues">
+        <li>Trasladadas: {d.trasladado} → <strong>{d.sobrante}</strong></li>
+        {destinoBalance && <li>Disponibles del contrato siguiente: {destinoBalance.disponible} → <strong>{destinoBalance.disponible - d.diferencia}</strong></li>}
+        <li className="text-muted-foreground">Compradas, importe y pagos: sin cambios</li>
+      </ul>
+      <Button className="h-12 w-full sm:w-auto" onClick={() => onConciliar(d.destino, d.sobrante)}>Conciliar saldo</Button>
     </div>
   );
 }

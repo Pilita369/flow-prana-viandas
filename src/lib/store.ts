@@ -656,6 +656,24 @@ export async function applyCarryOver(params: {
   return rowToPlan(data as Record<string, unknown>);
 }
 
+/**
+ * Concilia el saldo trasladado después de corregir consumos de un contrato cerrado.
+ * Se hace en la base en una sola transacción (función conciliar_traslado): respalda ambos contratos,
+ * fija lo recibido por el destino y lo anota en origen y destino. Repetirla no descuenta otra vez.
+ * No toca compras, importes, pagos ni consumos, y conserva el vínculo entre los contratos.
+ */
+export async function conciliarTraslado(params: { fromPlanId: string; toPlanId: string; cantidad: number; motivo?: string }): Promise<{ cambio: boolean; antes: number; despues: number; sobrante: number }> {
+  const { data, error } = await supabase.rpc('conciliar_traslado', {
+    p_origen: params.fromPlanId,
+    p_destino: params.toPlanId,
+    p_cantidad: Math.max(Math.floor(params.cantidad || 0), 0),
+    p_motivo: params.motivo || 'conciliación por corrección de consumos',
+  });
+  if (error) throw new Error(`No se pudo conciliar (no se cambió nada): ${error.message}`);
+  clearCache();
+  return data as { cambio: boolean; antes: number; despues: number; sobrante: number };
+}
+
 // ======================================================
 // CONSUMOS
 // ======================================================

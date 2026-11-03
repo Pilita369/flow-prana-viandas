@@ -23,6 +23,8 @@ interface Props {
   onPagosChange: () => void | Promise<void>;
   /** Cambia la cantidad comprada después de que la persona confirma la revisión (solo contrato en curso). */
   onRevisarCantidad?: (plan: Plan, nuevaCantidad: number, detalle: string) => Promise<void>;
+  /** Abrir "Conciliar saldo" desde el cierre de un contrato. */
+  onConciliar?: (from: Plan, to: Plan) => void;
 }
 
 const ESTADO: Record<string, { label: string; cls: string }> = {
@@ -37,7 +39,7 @@ const ESTADO: Record<string, { label: string; cls: string }> = {
  * En curso: lo que cubre, revisión de la cantidad, pago y hasta cuándo alcanzan las viandas.
  * Cerrado: el cierre tal como quedó, sin recalcular cantidades históricas.
  */
-export default function ActiveContractSummary({ client, plan, plans, consumptions, feriados, creditNotes, pagos, onPagosChange, onRevisarCantidad }: Props) {
+export default function ActiveContractSummary({ client, plan, plans, consumptions, feriados, creditNotes, pagos, onPagosChange, onRevisarCantidad, onConciliar }: Props) {
   const today = todayISO();
   const { servicio, necesarias } = necesidadDelContrato(plan, feriados);
   const balance = computePlanBalance(plan, consumptions, plans, today);
@@ -103,7 +105,7 @@ export default function ActiveContractSummary({ client, plan, plans, consumption
   return (
     <div className="space-y-3">
       {balance.cerrado ? (
-        <ContractCloseout plan={plan} plans={plans} balance={balance} />
+        <ContractCloseout plan={plan} plans={plans} balance={balance} onConciliar={onConciliar ? d => onConciliar(plan, d) : undefined} />
       ) : (
       <>
       {plan.regimen === 'intervalos' && (

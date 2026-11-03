@@ -26,7 +26,7 @@ import ContractPlannerCard, { type ContratoConfirmado } from '@/components/Contr
 import ServiceRegimeEditor, { type RegimenValor } from '@/components/ServiceRegimeEditor';
 import ContractRegimeCalc from '@/components/ContractRegimeCalc';
 import MonthWorkdaysCard from '@/components/MonthWorkdaysCard';
-import CarryOverDialog from '@/components/CarryOverDialog';
+import ConciliarSaldoDialog from '@/components/ConciliarSaldoDialog';
 import { TrasladoAConciliar } from '@/components/ContractPeriodParts';
 import ActiveContractSummary from '@/components/ActiveContractSummary';
 import { getPagosCliente, type PagoContrato } from '@/lib/pagos';
@@ -416,6 +416,7 @@ export default function ClientDetail() {
                 plans={clientPlans}
                 consumptions={consumptions}
                 onConsumptionsChange={next => { void refreshAfterConsumption(next); }}
+                onConciliar={(from, to) => setConciliar({ from, to, sobrante: 0 })}
                 onPlansChange={refreshPlans}
                 viandasPendientes={viandasPendientes}
                 planPeriodo={planSel}
@@ -428,6 +429,7 @@ export default function ClientDetail() {
               {clientPlans.map(p => (
                 <TrasladoAConciliar key={`conc-${p.id}`} plan={p} plans={clientPlans}
                   balance={computePlanBalance(p, consumptions, clientPlans, todayISO())}
+                  destinoBalance={(() => { const d = clientPlans.find(x => x.saldoOrigenPlanId === p.id); return d ? computePlanBalance(d, consumptions, clientPlans, todayISO()) : undefined; })()}
                   onConciliar={(destino, sobrante) => setConciliar({ from: p, to: destino, sobrante })} />
               ))}
               {/* Contrato del período seleccionado, con sus fechas bien identificadas */}
@@ -596,6 +598,7 @@ export default function ClientDetail() {
                         pagos={pagos}
                         onPagosChange={refreshPagos}
                         onRevisarCantidad={esVigente ? revisarCantidad : undefined}
+                        onConciliar={(from, to) => setConciliar({ from, to, sobrante: 0 })}
                       />
                       <div className="flex flex-wrap gap-2">
                         <Badge variant="secondary">{planSel.modalidad}</Badge>
@@ -677,15 +680,15 @@ export default function ClientDetail() {
         </TabsContent>
       </Tabs>
       {conciliar && (
-        <CarryOverDialog
+        <ConciliarSaldoDialog
           open={!!conciliar}
           onOpenChange={open => { if (!open) setConciliar(null); }}
           clientName={`${client.nombre} ${client.apellido}`.trim()}
           fromPlan={conciliar.from}
           toPlan={conciliar.to}
-          sobrante={conciliar.sobrante}
-          conciliacion
-          onApplied={() => { setConciliar(null); void refreshPlans(); }}
+          plans={clientPlans}
+          consumptions={consumptions}
+          onDone={async () => { setConciliar(null); await refreshPlans(); }}
         />
       )}
     </div>
