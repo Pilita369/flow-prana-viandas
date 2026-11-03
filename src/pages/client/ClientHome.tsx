@@ -5,6 +5,7 @@ import { canOrderTomorrow, createOrder } from '@/lib/store';
 import { getBusinessConfig } from '@/lib/business';
 import { useFeriados } from '@/lib/feriados';
 import { useClientData } from '@/hooks/useClientData';
+import ClientLoadState from '@/components/client/ClientLoadState';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import ClientMonthCard from '@/components/client/ClientMonthCard';
@@ -13,7 +14,7 @@ import ClientPeriodSummary from '@/components/client/ClientPeriodSummary';
 /** Inicio del cliente: el mes (días hábiles y precio) y un único resumen del período registrado. */
 export default function ClientHome() {
   const { accessLink } = useParams();
-  const { loading, client, plans, consumptions, creditNotes, pagos, activePlan: plan } = useClientData(accessLink);
+  const { loading, error, reload, client, plans, consumptions, creditNotes, pagos, activePlan: plan } = useClientData(accessLink);
   const { feriados } = useFeriados({ soloLectura: true });
   const [orderCheck, setOrderCheck] = useState<{ can: boolean; reason?: string }>({ can: false });
 
@@ -21,7 +22,7 @@ export default function ClientHome() {
     if (client && plan?.modalidad === 'flexible') canOrderTomorrow(client.id).then(setOrderCheck).catch(() => {});
   }, [client, plan]);
 
-  if (loading) return <div className="text-center py-12 text-muted-foreground">Cargando...</div>;
+  if (loading || error) return <ClientLoadState loading={loading} error={error} onRetry={() => { void reload(); }} />;
   if (!client) return <div className="text-center py-12 text-muted-foreground">Cliente no encontrado</div>;
 
   const handleOrder = async () => {

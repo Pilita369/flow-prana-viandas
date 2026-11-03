@@ -110,7 +110,7 @@ beforeEach(async () => {
 describe('ficha del cliente y planilla general sobre los mismos registros', () => {
   it('la ficha muestra lo cargado en la planilla y al cambiar 1 → 2 actualiza el mismo registro', async () => {
     render(<Ficha initial={await store.loadClientConsumptionsOrThrow('c1')} />);
-    expect(dayButton(/^03\/11\/2026: 1 viandas/)).toBeInTheDocument();
+    expect(dayButton(/^03\/11\/2026: 1 vianda /)).toBeInTheDocument();
 
     await elegir(/^03\/11\/2026/, '2');
     await waitFor(() => expect(dayButton(/^03\/11\/2026: 2 viandas/)).toBeInTheDocument());

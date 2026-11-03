@@ -18,35 +18,54 @@ export interface CellEditorProps {
   disponible: number | null;
   feriado: boolean;
   excluida: boolean;
-  onSave: (cantidad: number | null, notas?: string | null) => void;
+  onSave: (cantidad: number | null, notas?: string | null, notaCliente?: string | null) => void;
   onRetry: () => void;
   onClose: () => void;
+  /** Avisa si hay un cambio sin guardar (para no cerrar el editor y perderlo). */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** Se intentó cerrar con un cambio sin guardar: mostrar el aviso. */
+  avisoSinGuardar?: boolean;
+  /** Contrato al que se imputa la fecha (se muestra si está cerrado). */
+  contrato?: { desde: string; hasta: string; cerrado: boolean };
 }
 
 export default function ConsumptionCellEditor({
   clientName, fecha, rows, savedTotal, pending, habitual, disponible, feriado, excluida, onSave, onRetry, onClose,
+  onDirtyChange, avisoSinGuardar = false, contrato,
 }: CellEditorProps) {
   const currentNotes = Array.from(new Set(rows.map(r => r.notas?.trim()).filter(Boolean))).join(' | ');
+  const currentClientNote = Array.from(new Set(rows.map(r => r.notaCliente?.trim()).filter(Boolean))).join(' | ');
   const shown = pending && pending.status !== 'saved' ? pending.cantidad : savedTotal;
-  const [value, setValue] = useState<number>(shown ?? habitual);
+  const inicial = shown ?? habitual;
+  const [value, setValue] = useState<number>(inicial);
   const [notes, setNotes] = useState(currentNotes);
   const [showNotes, setShowNotes] = useState(!!currentNotes);
+  const [clientNote, setClientNote] = useState(currentClientNote);
+  const [showClientNote, setShowClientNote] = useState(!!currentClientNote);
 
   useEffect(() => {
     setValue(shown ?? habitual);
     setNotes(currentNotes);
     setShowNotes(!!currentNotes);
+    setClientNote(currentClientNote);
+    setShowClientNote(!!currentClientNote);
     // Solo al abrir otra casilla
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fecha, clientName]);
 
   const notesDirty = notes.trim() !== currentNotes;
   const notasArg = notesDirty ? notes.trim() || null : undefined;
+  const clientNoteDirty = clientNote.trim() !== currentClientNote;
+  const notaClienteArg = clientNoteDirty ? clientNote.trim() || null : undefined;
+  // Cambio sin guardar: otro número (o, sin registro, cualquier número distinto del habitual sugerido) o notas editadas
+  const dirty = value !== inicial || notesDirty || clientNoteDirty;
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   const quick = Array.from({ length: Math.max(5, habitual + 2) }, (_, i) => i);
   const saldoCon = (n: number) => (disponible === null ? null : disponible - (n - (savedTotal ?? 0)));
 
-  const choose = (n: number) => { onSave(n, notasArg); onClose(); };
+  const choose = (n: number) => { onDirtyChange?.(false); onSave(n, notasArg, notaClienteArg); onClose(); };
 
   const fechaLarga = capFirst(parseISODate(fecha).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' }));
   const saldoElegido = saldoCon(value);
@@ -64,6 +83,22 @@ export default function ConsumptionCellEditor({
           </span>
         </div>
       </div>
+
+      {contrato?.cerrado && (
+        <p className="text-xs rounded border border-border bg-muted/50 px-2 py-1.5" data-testid="editor-contrato-cerrado">
+          Fecha del contrato {contrato.desde} al {contrato.hasta} (cerrado). La corrección se imputa a ese contrato y queda registrada.
+        </p>
+      )}
+
+      {avisoSinGuardar && dirty && (
+        <div className="text-xs rounded border-2 border-warning bg-warning/15 px-2 py-1.5 space-y-1.5" role="alert" data-testid="aviso-sin-guardar">
+          <p className="font-semibold">Hay un cambio sin guardar ({value}).</p>
+          <div className="flex gap-2">
+            <Button size="sm" className="h-9" onClick={() => choose(value)}>Guardar {value}</Button>
+            <Button size="sm" variant="outline" className="h-9" onClick={() => { onDirtyChange?.(false); onClose(); }}>Descartar</Button>
+          </div>
+        </div>
+      )}
 
       {rows.length > 1 && (
         <p className="text-xs rounded bg-amber-500/10 text-amber-800 px-2 py-1.5">
@@ -128,17 +163,38 @@ export default function ConsumptionCellEditor({
       )}
 
       {showNotes ? (
-        <Textarea
-          value={notes}
-          onChange={e => setNotes(e.target.value)}
-          placeholder="Nota opcional (ej: retiró un familiar)"
-          className="text-sm min-h-[56px]"
-        />
+        <div>
+          <p className="text-[11px] font-medium text-muted-foreground mb-0.5">Nota interna (no la ve el cliente)</p>
+          <Textarea
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            placeholder="Nota opcional (ej: retiró un familiar)"
+            className="text-sm min-h-[56px]"
+            aria-label="Nota interna"
+          />
+        </div>
       ) : (
-        <button type="button" className="text-xs text-primary underline-offset-2 hover:underline" onClick={() => setShowNotes(true)}>
-          Agregar nota
+        <button type="button" className="text-xs text-primary underline-offset-2 hover:underline mr-4" onClick={() => setShowNotes(true)}>
+          Agregar nota interna
         </button>
       )}
+      {showClientNote ? (
+        <div>
+          <p className="text-[11px] font-medium text-muted-foreground mb-0.5">Nota para el cliente (la ve en su calendario)</p>
+          <Textarea
+            value={clientNote}
+            onChange={e => setClientNote(e.target.value)}
+            placeholder="Ej: se corrigió el registro de este día"
+            className="text-sm min-h-[56px]"
+            aria-label="Nota para el cliente"
+          />
+        </div>
+      ) : (
+        <button type="button" className="text-xs text-primary underline-offset-2 hover:underline" onClick={() => setShowClientNote(true)}>
+          Agregar nota para el cliente
+        </button>
+      )}
+      {(notesDirty || clientNoteDirty) && <p className="text-[11px] text-muted-foreground">Las notas se guardan al elegir la cantidad o tocar Guardar.</p>}
 
       {savedTotal !== null && (
         <div className="pt-2 border-t border-border">
@@ -146,7 +202,8 @@ export default function ConsumptionCellEditor({
             type="button"
             className="text-xs text-muted-foreground hover:text-destructive inline-flex items-center gap-1"
             onClick={() => {
-              if (currentNotes && !window.confirm('Este día tiene notas. ¿Quitar el registro y sus notas?')) return;
+              if ((currentNotes || currentClientNote) && !window.confirm('Este día tiene notas. ¿Quitar el registro y sus notas?')) return;
+              onDirtyChange?.(false);
               onSave(null);
               onClose();
             }}

@@ -15,7 +15,7 @@ import type {
   OrderStatus,
 } from '@/types';
 import { calcularTotalContrato, getDayNameFromDate, isHoliday, isExcludedForClient } from '@/lib/business';
-import { addDaysISO, parseISODate, partsInAR, planDailySave, todayISO, todayLabelAR } from '@/lib/consumo';
+import { addDaysISO, dayTotal, parseISODate, partsInAR, planDailySave, todayISO, todayLabelAR } from '@/lib/consumo';
 import { enTramos } from '@/lib/habiles';
 
 // ======================================================
@@ -168,6 +168,7 @@ function rowToConsumption(row: Record<string, unknown>): Consumption {
     tipo: row.tipo as 'fijo' | 'flexible' | 'manual',
     cantidad: (row.cantidad as number) || 0,
     notas: row.notas as string | undefined,
+    notaCliente: (row.nota_cliente as string | null) || undefined,
     createdAt: row.created_at as string,
   };
 }
@@ -230,6 +231,13 @@ export async function getClient(id: string): Promise<Client | undefined> {
     return undefined;
   }
 
+  return data ? rowToClient(data as Record<string, unknown>) : undefined;
+}
+
+/** Cliente por su link de acceso; lanza el error si la consulta falla (undefined = el link no existe). */
+export async function loadClientByLinkOrThrow(link: string): Promise<Client | undefined> {
+  const { data, error } = await supabase.from('clients').select('*').eq('access_link', link).maybeSingle();
+  if (error) throw new Error(`No se pudieron cargar tus datos: ${error.message}`);
   return data ? rowToClient(data as Record<string, unknown>) : undefined;
 }
 
@@ -377,9 +385,42 @@ export async function loadPlans(): Promise<Plan[]> {
   return _plansCache;
 }
 
+/** Igual que loadPlans pero lanza el error (para pantallas que deben avisar si falla). */
+export async function loadPlansOrThrow(): Promise<Plan[]> {
+  const { data, error } = await supabase.from('plans').select(PLAN_SELECT).order('fecha_inicio', { ascending: false });
+  if (error) throw new Error(`No se pudieron cargar los contratos: ${error.message}`);
+  _plansCache = (data || []).map((row) => rowToPlan(row as Record<string, unknown>));
+  return _plansCache;
+}
+
 export async function getPlans(): Promise<Plan[]> {
   if (_plansCache.length > 0) return _plansCache;
   return loadPlans();
+}
+
+/** Contratos de un cliente leídos directo de la base; lanza el error (para pantallas que deben avisar si falla). */
+export async function loadClientPlansOrThrow(clientId: string): Promise<Plan[]> {
+  const { data, error } = await supabase
+    .from('plans')
+    .select(PLAN_SELECT)
+    .eq('client_id', clientId)
+    .order('fecha_inicio', { ascending: false });
+  if (error) throw new Error(`No se pudieron cargar los contratos: ${error.message}`);
+  return (data || []).map((row) => rowToPlan(row as Record<string, unknown>));
+}
+
+/** Cliente leído de la base; lanza el error si la consulta falla (undefined = no existe). */
+export async function loadClientOrThrow(id: string): Promise<Client | undefined> {
+  const { data, error } = await supabase.from('clients').select('*').eq('id', id).maybeSingle();
+  if (error) throw new Error(`No se pudo cargar el cliente: ${error.message}`);
+  return data ? rowToClient(data as Record<string, unknown>) : undefined;
+}
+
+/** Movimientos de puntos de un cliente (sin traer los de todos). */
+export async function loadClientPointsOrThrow(clientId: string): Promise<PointTransaction[]> {
+  const { data, error } = await supabase.from('points').select('*').eq('client_id', clientId).order('fecha', { ascending: false });
+  if (error) throw new Error(`No se pudieron cargar los puntos: ${error.message}`);
+  return (data || []).map((r) => rowToPoint(r as Record<string, unknown>));
 }
 
 export async function getClientPlans(clientId: string): Promise<Plan[]> {
@@ -541,8 +582,10 @@ export async function applyCarryOver(params: {
   cantidad: number;
   reducirCompra: boolean;
   motivo?: string;
+  /** Conciliación: guardar antes una copia de ambos contratos en "respaldos" y anotarla también en el contrato de origen. */
+  respaldar?: boolean;
 }): Promise<Plan> {
-  const { fromPlan, toPlan, reducirCompra, motivo } = params;
+  const { fromPlan, toPlan, reducirCompra, motivo, respaldar } = params;
   const cantidad = Math.max(Math.floor(params.cantidad || 0), 0);
   const previo = toPlan.saldoOrigenPlanId === fromPlan.id ? toPlan.saldoAnteriorAplicado || 0 : 0;
 
@@ -573,6 +616,19 @@ export async function applyCarryOver(params: {
     '.';
   payload.observaciones = toPlan.observaciones ? `${toPlan.observaciones}\n${linea}` : linea;
 
+  if (respaldar) {
+    // Copia de ambos contratos tal como están en la base, antes de cambiar nada
+    const { data: actuales, error: readError } = await supabase.from('plans').select('*').in('id', [fromPlan.id, toPlan.id]);
+    if (readError) throw new Error(`No se pudo leer el contrato para respaldarlo (no se cambió nada): ${readError.message}`);
+    const { error: backupError } = await supabase.from('respaldos').insert((actuales || []).map((row) => ({
+      motivo: `Antes de ${motivo || 'conciliar el saldo trasladado'}: traslado ${previo} → ${cantidad} vianda(s) del contrato ${origen}`,
+      tabla: 'plans',
+      registro_id: String((row as Record<string, unknown>).id),
+      datos: row,
+    })));
+    if (backupError) throw new Error(`No se pudo guardar el respaldo (no se cambió nada): ${backupError.message}`);
+  }
+
   const { data, error } = await supabase
     .from('plans')
     .update(payload)
@@ -583,6 +639,17 @@ export async function applyCarryOver(params: {
   if (error) {
     console.error('Error aplicando saldo:', error.message);
     throw new Error(`Error aplicando saldo: ${error.message}`);
+  }
+
+  if (respaldar) {
+    // Constancia también en el contrato de origen (no cambia ninguna cantidad)
+    const destino = `${toPlan.fechaInicio.split('-').reverse().join('/')}–${toPlan.fechaFin.split('-').reverse().join('/')}`;
+    const nota = `[${hoy}] Saldo trasladado conciliado: ${previo} → ${cantidad} vianda(s) al contrato ${destino}${motivo ? ` (${motivo})` : ''}.`;
+    const { error: notaError } = await supabase
+      .from('plans')
+      .update({ observaciones: fromPlan.observaciones ? `${fromPlan.observaciones}\n${nota}` : nota })
+      .eq('id', fromPlan.id);
+    if (notaError) console.error('No se pudo anotar la conciliación en el contrato de origen:', notaError.message);
   }
 
   clearCache();
@@ -658,8 +725,16 @@ export async function setDailyConsumption(params: {
   fecha: string;
   cantidad: number | null;
   notas?: string | null;
+  notaCliente?: string | null;
+  /**
+   * Corrección en un contrato cerrado: antes de escribir se guarda una copia del día en "respaldos"
+   * (con el valor anterior y el nuevo), para dejar constancia de la corrección.
+   */
+  respaldo?: { motivo: string };
+  /** El registro existente pertenece a otro contrato: pasarlo al contrato de su fecha. */
+  reimputar?: boolean;
 }): Promise<Consumption[]> {
-  const { clientId, planId, fecha, cantidad, notas } = params;
+  const { clientId, planId, fecha, cantidad, notas, notaCliente, respaldo, reimputar } = params;
 
   const { data: current, error: readError } = await supabase
     .from('consumptions')
@@ -669,14 +744,37 @@ export async function setDailyConsumption(params: {
   if (readError) throw new Error(`No se pudo leer el día: ${readError.message}`);
 
   const rows = (current || []).map((r) => rowToConsumption(r as Record<string, unknown>));
-  const ops = planDailySave(rows, cantidad, notas);
+  const ops = planDailySave(rows, cantidad, notas, notaCliente);
+  // Si el registro que queda está en otro contrato, se pasa al contrato de su fecha
+  const keep = ops.update ? rows.find(r => r.id === ops.update!.id) : rows.slice().sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))[0];
+  if (reimputar && cantidad !== null && keep && keep.planId !== planId && !ops.update) {
+    ops.update = { id: keep.id, cantidad, status: cantidad > 0 ? 'retirado' : 'no_retirado', notas: keep.notas || null, notaCliente: keep.notaCliente || null };
+  }
+  const cambiaPlan = !!reimputar && !!ops.update && !!keep && keep.planId !== planId;
+  const cambia = !!ops.update || !!ops.insert || ops.deleteIds.length > 0;
+
+  // Constancia de la corrección ANTES de modificar: si no se puede guardar el respaldo, no se cambia nada
+  if (respaldo && cambia) {
+    const { error } = await supabase.from('respaldos').insert({
+      motivo: respaldo.motivo,
+      tabla: 'consumptions',
+      registro_id: `${clientId}|${fecha}`,
+      datos: { antes: current || [], nuevo: { cantidad, plan_id: planId }, fecha_correccion: new Date().toISOString() },
+    });
+    if (error) throw new Error(`No se pudo guardar el respaldo de la corrección (no se cambió nada): ${error.message}`);
+  }
 
   if (ops.update) {
-    const { error } = await supabase
+    const { data: updated, error } = await supabase
       .from('consumptions')
-      .update({ cantidad: ops.update.cantidad, status: ops.update.status, notas: ops.update.notas })
-      .eq('id', ops.update.id);
+      .update({
+        cantidad: ops.update.cantidad, status: ops.update.status, notas: ops.update.notas, nota_cliente: ops.update.notaCliente,
+        ...(cambiaPlan ? { plan_id: planId } : {}),
+      })
+      .eq('id', ops.update.id)
+      .select('id');
     if (error) throw new Error(`No se pudo guardar: ${error.message}`);
+    if (!updated || updated.length === 0) throw new Error('No se pudo guardar: la base no actualizó el registro');
   }
 
   if (ops.insert) {
@@ -689,6 +787,7 @@ export async function setDailyConsumption(params: {
       tipo: 'manual',
       cantidad: ops.insert.cantidad,
       notas: ops.insert.notas,
+      nota_cliente: ops.insert.notaCliente,
     });
     if (error) throw new Error(`No se pudo guardar: ${error.message}`);
   }
@@ -711,10 +810,16 @@ export async function setDailyConsumption(params: {
     .select('*')
     .eq('client_id', clientId)
     .eq('fecha', fecha);
-  if (afterError) throw new Error(`Guardado, pero no se pudo confirmar: ${afterError.message}`);
+  if (afterError) throw new Error(`No se pudo confirmar el guardado: ${afterError.message}. Tocá la fecha para reintentar.`);
 
   _consumptionsCache = [];
-  return (after || []).map((r) => rowToConsumption(r as Record<string, unknown>));
+  const saved = (after || []).map((r) => rowToConsumption(r as Record<string, unknown>));
+  // Solo se informa "guardado" si la base muestra exactamente el total pedido
+  const total = dayTotal(saved);
+  if (cantidad === null ? saved.length > 0 : total !== cantidad) {
+    throw new Error(`No se confirmó el guardado: la base muestra ${total === null ? 'sin registro' : total}. Reintentá.`);
+  }
+  return saved;
 }
 
 export async function getConsumptions(): Promise<Consumption[]> {

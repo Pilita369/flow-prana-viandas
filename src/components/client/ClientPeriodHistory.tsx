@@ -76,7 +76,7 @@ export default function ClientPeriodHistory({ plans, consumptions, creditNotes }
               for (const c of delMes) {
                 const d = porDia.get(c.fecha) || { total: 0, registrado: true, notas: [] };
                 if (isConsumed(c.status)) d.total += c.cantidad || 0;
-                if (c.notas?.trim()) d.notas.push(c.notas.trim());
+                if (c.notaCliente?.trim()) d.notas.push(c.notaCliente.trim()); // solo la nota para el cliente, nunca la interna
                 porDia.set(c.fecha, d);
               }
               const dias = Array.from(porDia.entries()).sort((a, b) => b[0].localeCompare(a[0]));

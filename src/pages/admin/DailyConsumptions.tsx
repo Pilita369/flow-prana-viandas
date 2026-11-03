@@ -7,14 +7,14 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent } from '@/components/ui/popover';
 import ConsumptionCellEditor from '@/components/ConsumptionCellEditor';
 import CarryOverDialog from '@/components/CarryOverDialog';
-import { loadClients, loadPlans, loadConsumptionsOrThrow } from '@/lib/store';
+import { loadClients, loadPlans, loadPlansOrThrow, loadConsumptionsOrThrow } from '@/lib/store';
 import { formatDateAR } from '@/lib/business';
 import { useFeriados } from '@/lib/feriados';
 import {
-  computePlanBalance, dayTotal, getNextPlan, monthDays, parseISODate, planForMonth,
+  computePlanBalance, dayTotal, destinoDelConsumo, getNextPlan, monthDays, parseISODate, planForMonth,
   resolvePlanForDate, todayISO, isConsumed, capFirst, type PlanBalance,
 } from '@/lib/consumo';
-import { cellKey as keyOf, useConsumptionSaver, useRefreshOnReturn } from '@/hooks/useConsumptionSaver';
+import { cellKey as keyOf, prepararGuardado, useConsumptionSaver, useRefreshOnReturn } from '@/hooks/useConsumptionSaver';
 import { ConsumptionLegend, DayMarks, SaveIndicator, dayStatusClass, dayTitle, dayToneClass, describeDay } from '@/components/ConsumptionShared';
 import { toast } from 'sonner';
 import type { Client, Consumption, Plan } from '@/types';
@@ -50,6 +50,11 @@ export default function DailyConsumptions() {
   const [carry, setCarry] = useState<{ client: Client; from: Plan; to: Plan; sobrante: number; conciliacion: boolean } | null>(null);
 
   const anchorRef = useRef<HTMLElement | null>(null);
+  // Cambio sin guardar en el editor: no se cierra sin avisar
+  const dirtyRef = useRef(false);
+  const onDirtyChange = useCallback((d: boolean) => { dirtyRef.current = d; }, []);
+  const [avisoSinGuardar, setAvisoSinGuardar] = useState(false);
+  const cerrarEditor = () => { dirtyRef.current = false; setAvisoSinGuardar(false); setEditing(null); };
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const setConsumptions = (next: Consumption[]) => { consRef.current = next; setConsumptionsState(next); };
@@ -58,7 +63,7 @@ export default function DailyConsumptions() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [cl, pl, co] = await Promise.all([loadClients(), loadPlans(), loadConsumptionsOrThrow()]);
+      const [cl, pl, co] = await Promise.all([loadClients(), loadPlansOrThrow(), loadConsumptionsOrThrow()]);
       setClients(cl);
       setPlans(pl);
       setConsumptions(co);
@@ -74,7 +79,7 @@ export default function DailyConsumptions() {
   /** Relectura silenciosa (sin pantalla de carga), al volver a la pestaña. */
   const refresh = useCallback(async () => {
     try {
-      const [cl, pl, co] = await Promise.all([loadClients(), loadPlans(), loadConsumptionsOrThrow()]);
+      const [cl, pl, co] = await Promise.all([loadClients(), loadPlansOrThrow(), loadConsumptionsOrThrow()]);
       setClients(cl);
       setPlans(pl);
       setConsumptions(co);
@@ -164,12 +169,15 @@ export default function DailyConsumptions() {
   });
   const { cells } = saver;
 
-  const save = useCallback((client: Client, fecha: string, cantidad: number | null, notas?: string | null) => {
-    const existing = consRef.current.filter(c => c.clientId === client.id && c.fecha === fecha);
-    const planId = existing[0]?.planId || resolvePlanForDate(plansByClient.get(client.id) || [], fecha)?.id;
-    if (!planId) { toast.error(`${fullName(client)} no tiene contrato cargado`); return; }
-    saver.save({ clientId: client.id, planId, fecha, cantidad, notas });
-  }, [plansByClient, saver]);
+  /** Reemplaza el total del día y lo imputa al contrato de esa fecha (aunque esté cerrado), igual que la ficha. */
+  const save = useCallback((client: Client, fecha: string, cantidad: number | null, notas?: string | null, notaCliente?: string | null) => {
+    const p = prepararGuardado({
+      clientId: client.id, plans: plansByClient.get(client.id) || [],
+      consumos: consRef.current.filter(c => c.clientId === client.id), fecha, cantidad, notas, notaCliente, today,
+    });
+    if (!p) { toast.error(`${fullName(client)} no tiene contrato cargado`); return; }
+    saver.save(p);
+  }, [plansByClient, saver, today]);
 
   const retry = (client: Client, fecha: string) => saver.retry(client.id, fecha);
 
@@ -201,7 +209,7 @@ export default function DailyConsumptions() {
     if (e.key === 'Backspace' || e.key === 'Delete') {
       e.preventDefault();
       if (savedTotal === null) return;
-      if (hasNotes) { anchorRef.current = e.currentTarget; setEditing({ clientId: client.id, fecha }); return; }
+      if (hasNotes) { anchorRef.current = e.currentTarget; dirtyRef.current = false; setAvisoSinGuardar(false); setEditing({ clientId: client.id, fecha }); return; }
       save(client, fecha, null);
       return;
     }
@@ -216,7 +224,7 @@ export default function DailyConsumptions() {
   const disponibleFor = (clientId: string, fecha: string): number | null => {
     const rows = rowsFor(clientId, fecha);
     const cp = plansByClient.get(clientId) || [];
-    const plan = plans.find(p => p.id === rows[0]?.planId) || dayPlans.get(clientId)?.get(fecha);
+    const plan = destinoDelConsumo(cp, fecha, rows).plan;
     if (!plan) return null;
     return computePlanBalance(plan, consByClient.get(clientId) || [], cp, today).disponible;
   };
@@ -326,7 +334,7 @@ export default function DailyConsumptions() {
                               type="button"
                               data-cell={`${r}:${c}`}
                               disabled={disabled}
-                              onClick={e => { anchorRef.current = e.currentTarget; setEditing({ clientId: client.id, fecha: d }); }}
+                              onClick={e => { anchorRef.current = e.currentTarget; dirtyRef.current = false; setAvisoSinGuardar(false); setEditing({ clientId: client.id, fecha: d }); }}
                               onKeyDown={e => onCellKeyDown(e, client, d, r, c, savedTotal, info.hasNotes)}
                               aria-label={`${fullName(client)} ${formatDateAR(d)}: ${shown === null ? 'sin registro' : shown}`}
                               title={dayTitle(info, rows.length)}
@@ -349,12 +357,17 @@ export default function DailyConsumptions() {
             </table>
           </div>
 
-          <Popover open={!!editing} onOpenChange={open => { if (!open) setEditing(null); }}>
+          <Popover open={!!editing} onOpenChange={open => {
+            if (open) return;
+            if (dirtyRef.current) { setAvisoSinGuardar(true); return; }
+            cerrarEditor();
+          }}>
             <PopoverPrimitive.Anchor virtualRef={anchorRef as React.RefObject<HTMLElement>} />
             <PopoverContent className="w-[19rem] p-3" collisionPadding={12} onOpenAutoFocus={e => e.preventDefault()}>
               {editing && editingClient && (() => {
                 const rows = rowsFor(editing.clientId, editing.fecha);
-                const plan = plans.find(p => p.id === rows[0]?.planId) || dayPlans.get(editing.clientId)?.get(editing.fecha);
+                const cp = plansByClient.get(editing.clientId) || [];
+                const plan = destinoDelConsumo(cp, editing.fecha, rows).plan;
                 return (
                   <ConsumptionCellEditor
                     clientName={fullName(editingClient)}
@@ -366,9 +379,12 @@ export default function DailyConsumptions() {
                     disponible={disponibleFor(editing.clientId, editing.fecha)}
                     feriado={feriados.has(editing.fecha)}
                     excluida={!!plan?.fechasExcluidas?.includes(editing.fecha)}
-                    onSave={(cant, notas) => save(editingClient, editing.fecha, cant, notas)}
+                    onSave={(cant, notas, notaCliente) => save(editingClient, editing.fecha, cant, notas, notaCliente)}
                     onRetry={() => retry(editingClient, editing.fecha)}
-                    onClose={() => { setEditing(null); anchorRef.current?.focus(); }}
+                    onClose={() => { cerrarEditor(); anchorRef.current?.focus(); }}
+                    onDirtyChange={onDirtyChange}
+                    avisoSinGuardar={avisoSinGuardar}
+                    contrato={plan ? { desde: formatDateAR(plan.fechaInicio), hasta: formatDateAR(plan.fechaFin), cerrado: computePlanBalance(plan, consByClient.get(editing.clientId) || [], cp, today).cerrado } : undefined}
                   />
                 );
               })()}

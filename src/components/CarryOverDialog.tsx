@@ -45,6 +45,7 @@ export default function CarryOverDialog({
       await applyCarryOver({
         fromPlan, toPlan, cantidad, reducirCompra,
         motivo: conciliacion ? 'conciliación por corrección de consumos' : undefined,
+        respaldar: conciliacion,
       });
       toast.success(conciliacion ? 'Saldo conciliado' : 'Saldo aplicado al contrato siguiente');
       onOpenChange(false);
@@ -86,10 +87,12 @@ export default function CarryOverDialog({
           </div>
 
           {conciliacion ? (
-            <p className="text-xs text-amber-700 bg-amber-500/10 rounded px-2 py-1.5">
-              Se corrigieron consumos del contrato anterior y ahora sobran {sobrante} en lugar de {yaAplicado}.
-              Las viandas compradas del contrato siguiente no se modifican.
-            </p>
+            <div className="text-xs bg-warning/15 rounded px-2 py-1.5 space-y-1" data-testid="conciliacion-detalle">
+              <p>Se corrigieron consumos del contrato anterior: al cierre quedan <strong>{sobrante}</strong> a favor y se habían trasladado <strong>{yaAplicado}</strong>.</p>
+              <p>Diferencia: <strong>{yaAplicado > sobrante ? `${yaAplicado - sobrante} trasladada(s) de más` : `${sobrante - yaAplicado} sin trasladar`}</strong>.
+                Al confirmar, el contrato siguiente queda con {Number.isNaN(cantidad) ? 0 : cantidad} recibida(s) (su disponible cambia {delta > 0 ? '+' : ''}{Number.isNaN(delta) ? 0 : delta}).</p>
+              <p>No se modifican viandas compradas, precios ni pagos, y no se generan créditos nuevos. Antes se guarda un respaldo de ambos contratos.</p>
+            </div>
           ) : (
             <label className="flex items-start gap-2 cursor-pointer">
               <input type="checkbox" className="mt-1 h-4 w-4" checked={reducirCompra} onChange={e => setReducirCompra(e.target.checked)} />

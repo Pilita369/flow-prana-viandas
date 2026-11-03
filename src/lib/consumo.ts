@@ -120,6 +120,19 @@ export function resolvePlanForDate(clientPlans: Plan[], fecha: string): Plan | u
   return sorted.find(p => p.activo) || sorted[0];
 }
 
+/**
+ * A qué contrato va el consumo de una fecha: al que cubre esa fecha (aunque esté cerrado), no al vigente.
+ * Si ningún contrato la cubre, se respeta el contrato que ya tenía el registro.
+ * `reimputar` = el registro existente estaba en otro contrato y debe pasar al de su fecha.
+ */
+export function destinoDelConsumo(clientPlans: Plan[], fecha: string, existentes: Consumption[]): { plan?: Plan; reimputar: boolean } {
+  const cubren = clientPlans.filter(p => p.fechaInicio <= fecha && fecha <= p.fechaFin).sort(byInicio);
+  const cubre = cubren[cubren.length - 1];
+  if (cubre) return { plan: cubre, reimputar: existentes.some(r => r.planId !== cubre.id) };
+  const actual = existentes[0] && clientPlans.find(p => p.id === existentes[0].planId);
+  return { plan: actual || resolvePlanForDate(clientPlans, fecha), reimputar: false };
+}
+
 /** Contrato principal de un mes: el de mayor superposición; si no hay, el vigente al fin de mes. */
 export function planForMonth(clientPlans: Plan[], year: number, month0: number): Plan | undefined {
   const days = monthDays(year, month0);
@@ -221,8 +234,8 @@ export function splitCarryOver(necesita: number, saldoAFavor: number): { aplicar
 // ------------------------------------------------------
 
 export interface DailySaveOps {
-  insert?: { cantidad: number; status: ConsumptionStatus; notas: string | null };
-  update?: { id: string; cantidad: number; status: ConsumptionStatus; notas: string | null };
+  insert?: { cantidad: number; status: ConsumptionStatus; notas: string | null; notaCliente: string | null };
+  update?: { id: string; cantidad: number; status: ConsumptionStatus; notas: string | null; notaCliente: string | null };
   deleteIds: string[];
   /** Diferencia de viandas consumidas respecto de lo que había (para puntos). */
   delta: number;
@@ -233,15 +246,21 @@ function joinNotes(rows: Consumption[]): string | null {
   return notes.length ? notes.join(' | ') : null;
 }
 
+function joinClientNotes(rows: Consumption[]): string | null {
+  const notes = Array.from(new Set(rows.map(r => (r.notaCliente || '').trim()).filter(Boolean)));
+  return notes.length ? notes.join(' | ') : null;
+}
+
 /**
  * Calcula las operaciones para que el día quede con un único registro cuyo total sea `cantidad`.
- * `cantidad = null` quita el registro del día. `notas = undefined` conserva las notas existentes.
+ * `cantidad = null` quita el registro del día. `notas` / `notaCliente` = undefined conservan las existentes.
  * Es idempotente: aplicar el mismo valor dos veces no genera cambios ni duplicados.
  */
 export function planDailySave(
   rows: Consumption[],
   cantidad: number | null,
   notas?: string | null,
+  notaCliente?: string | null,
 ): DailySaveOps {
   const prev = dayTotal(rows) ?? 0;
 
@@ -255,9 +274,10 @@ export function planDailySave(
 
   const status: ConsumptionStatus = cantidad > 0 ? 'retirado' : 'no_retirado';
   const nextNotes = notas === undefined ? joinNotes(rows) : (notas?.trim() || null);
+  const nextClientNote = notaCliente === undefined ? joinClientNotes(rows) : (notaCliente?.trim() || null);
 
   if (rows.length === 0) {
-    return { insert: { cantidad, status, notas: nextNotes }, deleteIds: [], delta: cantidad };
+    return { insert: { cantidad, status, notas: nextNotes, notaCliente: nextClientNote }, deleteIds: [], delta: cantidad };
   }
 
   const sorted = rows.slice().sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
@@ -267,10 +287,11 @@ export function planDailySave(
     deleteIds.length === 0 &&
     keep.cantidad === cantidad &&
     isConsumed(keep.status) === isConsumed(status) &&
-    (keep.notas || null) === nextNotes;
+    (keep.notas || null) === nextNotes &&
+    (keep.notaCliente || null) === nextClientNote;
 
   return {
-    update: unchanged ? undefined : { id: keep.id, cantidad, status, notas: nextNotes },
+    update: unchanged ? undefined : { id: keep.id, cantidad, status, notas: nextNotes, notaCliente: nextClientNote },
     deleteIds,
     delta: cantidad - prev,
   };

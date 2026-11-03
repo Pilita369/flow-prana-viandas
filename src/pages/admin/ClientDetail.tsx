@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  getClient, getActivePlan, loadClientConsumptionsOrThrow, getClientPoints, getClientPlans,
+  getClient, loadClientConsumptionsOrThrow, getClientPoints, loadClientOrThrow, loadClientPlansOrThrow, loadClientPointsOrThrow,
   updatePlan, loadPlans, createPlan,
   renovarPlan, getCreditNotes, assignPendingManualCredits, isPendingManualCredit,
 } from '@/lib/store';
@@ -26,6 +26,8 @@ import ContractPlannerCard, { type ContratoConfirmado } from '@/components/Contr
 import ServiceRegimeEditor, { type RegimenValor } from '@/components/ServiceRegimeEditor';
 import ContractRegimeCalc from '@/components/ContractRegimeCalc';
 import MonthWorkdaysCard from '@/components/MonthWorkdaysCard';
+import CarryOverDialog from '@/components/CarryOverDialog';
+import { TrasladoAConciliar } from '@/components/ContractPeriodParts';
 import ActiveContractSummary from '@/components/ActiveContractSummary';
 import { getPagosCliente, type PagoContrato } from '@/lib/pagos';
 import { estimarCobertura, propuestaRegimen } from '@/lib/contrato';
@@ -93,29 +95,44 @@ export default function ClientDetail() {
   const [planElegidoId, setPlanElegidoId] = useState<string | null>(null);
   useEffect(() => { setPlanElegidoId(null); }, [mes]);
   const [pagos, setPagos] = useState<PagoContrato[]>([]);
+  const [conciliar, setConciliar] = useState<{ from: Plan; to: Plan; sobrante: number } | null>(null);
   const refreshPagos = async () => {
     if (!id) return;
     try { setPagos(await getPagosCliente(id)); } catch (e) { console.error('No se pudieron leer los pagos:', e); }
   };
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [lento, setLento] = useState(false);
+  const loadSeq = useRef(0);
+
   const load = async () => {
     if (!id) return;
+    const seq = ++loadSeq.current;
     setLoading(true);
+    setLoadError(null);
+    setLento(false);
+    const aviso = setTimeout(() => { if (loadSeq.current === seq) setLento(true); }, 8000);
     try {
-      const c = await getClient(id);
+      // Todo en paralelo y directo de la base (cada consulta tiene tiempo límite): nunca queda "Cargando..." sin fin
+      const [c, allPlans, clientConsumptions, clientPoints, notes, pagosCliente] = await Promise.all([
+        loadClientOrThrow(id),
+        loadClientPlansOrThrow(id),
+        loadClientConsumptionsOrThrow(id),
+        loadClientPointsOrThrow(id),
+        getCreditNotes(id),
+        getPagosCliente(id),
+      ]);
+      if (loadSeq.current !== seq) return;
       if (!c) { navigate('/admin/clientes'); return; }
-      const activePlan = (await getActivePlan(id)) || null;
-      const clientConsumptions = await loadClientConsumptionsOrThrow(id);
-      const clientPoints = await getClientPoints(id);
-      const allPlans = await getClientPlans(id);
+      const activePlan = allPlans.find(p => p.activo) || null;
 
       setClient(c);
       setPlan(activePlan);
       setConsumptions(clientConsumptions);
       setClientPlans(allPlans);
       setPoints(clientPoints);
-      setCreditNotes(await getCreditNotes(id).catch(() => []));
-      await refreshPagos();
+      setCreditNotes(notes);
+      setPagos(pagosCliente);
 
       if (activePlan) {
         setRegEdit({ regimen: activePlan.regimen || 'periodo', intervalos: activePlan.intervalos || [] });
@@ -138,10 +155,12 @@ export default function ClientDetail() {
         });
       }
     } catch (error) {
+      if (loadSeq.current !== seq) return;
       console.error('Error cargando cliente:', error);
-      toast.error('Error cargando datos del cliente');
+      setLoadError((error as Error).message || 'Error cargando datos del cliente');
     } finally {
-      setLoading(false);
+      clearTimeout(aviso);
+      if (loadSeq.current === seq) { setLoading(false); setLento(false); }
     }
   };
 
@@ -151,9 +170,11 @@ export default function ClientDetail() {
   const refreshAfterConsumption = async (next: Consumption[]) => {
     if (!id) return;
     setConsumptions(next);
-    const [c, clientPoints] = await Promise.all([getClient(id), getClientPoints(id)]);
-    if (c) setClient(c);
-    setPoints(clientPoints);
+    try {
+      const [c, clientPoints] = await Promise.all([getClient(id), loadClientPointsOrThrow(id)]);
+      if (c) setClient(c);
+      setPoints(clientPoints);
+    } catch (e) { console.error('No se pudieron releer los puntos:', e); }
   };
 
   /** Después de cambiar un ajuste manual: relee contratos (su saldo incluye los ajustes). */
@@ -166,9 +187,14 @@ export default function ClientDetail() {
   /** Relee los contratos (después de marcar días excluidos, recalcular o sumar ajustes). */
   const refreshPlans = async () => {
     if (!id) return;
-    const [activePlan, allPlans] = await Promise.all([getActivePlan(id), getClientPlans(id)]);
-    setPlan(activePlan || null);
-    setClientPlans(allPlans);
+    try {
+      const allPlans = await loadClientPlansOrThrow(id);
+      setPlan(allPlans.find(p => p.activo) || null);
+      setClientPlans(allPlans);
+    } catch (e) {
+      console.error(e);
+      toast.error('No se pudieron releer los contratos. Recargá la ficha.');
+    }
   };
 
   /** Al volver a la pestaña, relee los consumos (pueden haberse cargado desde la planilla general u otro dispositivo). */
@@ -279,7 +305,21 @@ export default function ClientDetail() {
     }
   };
 
-  if (loading) return <p className="p-4 text-muted-foreground">Cargando...</p>;
+  if (loading || loadError) {
+    return (
+      <div className="p-4 space-y-3 max-w-md" role="status" aria-live="polite">
+        {loadError ? (
+          <>
+            <p className="font-semibold text-destructive">No se pudo cargar la ficha</p>
+            <p className="text-sm text-muted-foreground">{loadError}</p>
+          </>
+        ) : (
+          <p className="text-muted-foreground">Cargando...{lento && ' Está tardando más de lo normal.'}</p>
+        )}
+        {(loadError || lento) && <Button onClick={() => { void load(); }} className="h-11"><RefreshCw className="w-4 h-4 mr-2" />Reintentar</Button>}
+      </div>
+    );
+  }
   if (!client) return null;
 
   const accessUrl = `${window.location.origin}/cliente/${client.accessLink}`;
@@ -384,6 +424,12 @@ export default function ClientDetail() {
             </div>
 
             <div className="space-y-5 min-w-0 xl:col-start-2 xl:row-start-2">
+              {/* Contratos cerrados cuyo traslado ya no coincide con su cierre (por una corrección): se ofrece conciliar */}
+              {clientPlans.map(p => (
+                <TrasladoAConciliar key={`conc-${p.id}`} plan={p} plans={clientPlans}
+                  balance={computePlanBalance(p, consumptions, clientPlans, todayISO())}
+                  onConciliar={(destino, sobrante) => setConciliar({ from: p, to: destino, sobrante })} />
+              ))}
               {/* Contrato del período seleccionado, con sus fechas bien identificadas */}
               <div className="glass-card p-5 space-y-3" data-testid="tarjeta-contrato">
                 {contratosMes.length > 1 && (
@@ -630,6 +676,18 @@ export default function ClientDetail() {
           <ClientPointsPanel puntos={client.puntos} points={points} />
         </TabsContent>
       </Tabs>
+      {conciliar && (
+        <CarryOverDialog
+          open={!!conciliar}
+          onOpenChange={open => { if (!open) setConciliar(null); }}
+          clientName={`${client.nombre} ${client.apellido}`.trim()}
+          fromPlan={conciliar.from}
+          toPlan={conciliar.to}
+          sobrante={conciliar.sobrante}
+          conciliacion
+          onApplied={() => { setConciliar(null); void refreshPlans(); }}
+        />
+      )}
     </div>
   );
 }

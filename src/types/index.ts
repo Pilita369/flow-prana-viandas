@@ -131,7 +131,10 @@ export interface Consumption {
   // Cantidad de viandas de ese movimiento
   cantidad: number;
 
+  /** Nota interna (solo administración). */
   notas?: string;
+  /** Nota visible para el cliente en su calendario. */
+  notaCliente?: string;
   createdAt: string;
 }
 

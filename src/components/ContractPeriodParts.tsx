@@ -45,7 +45,7 @@ export function ContractCloseout({ plan, plans, balance }: { plan: Plan; plans: 
         </p>
       ))}
       {balance.excedido > 0 && <p className="text-sm text-destructive">Se consumieron {balance.excedido} más de las disponibles.</p>}
-      {balance.trasladadoDeMas > 0 && <p className="text-sm text-destructive">Se trasladaron {balance.trasladadoDeMas} más de lo que sobró: revisar.</p>}
+      {balance.trasladadoDeMas > 0 && <p className="text-sm text-destructive" data-testid="cierre-de-mas">Se trasladaron {balance.trasladadoDeMas} más de lo que sobró: falta conciliar.</p>}
       <p className="text-xs text-muted-foreground">Los días cargados en 0 son días sin consumo: no cambian lo comprado ni el importe.</p>
     </div>
   );
@@ -114,5 +114,39 @@ export function ContractAdjustments({ plan, creditNotes }: { plan: Plan; creditN
         );
       })}
     </ul>
+  );
+}
+
+/** Diferencia entre lo trasladado y el saldo real al cierre (después de corregir consumos de un contrato cerrado). */
+export function diferenciaDeTraslado(plan: Plan, plans: Plan[], balance: PlanBalance): { destino: Plan; sobrante: number; trasladado: number; diferencia: number } | null {
+  const destino = plans.find(p => p.saldoOrigenPlanId === plan.id && (p.saldoAnteriorAplicado || 0) > 0);
+  if (!destino || !balance.cerrado) return null;
+  const sobrante = Math.max(balance.restante, 0);
+  const trasladado = destino.saldoAnteriorAplicado || 0;
+  if (sobrante === trasladado) return null;
+  return { destino, sobrante, trasladado, diferencia: trasladado - sobrante };
+}
+
+/** Aviso de conciliación: no cambia nada solo; ofrece conciliar con confirmación. */
+export function TrasladoAConciliar({ plan, plans, balance, onConciliar }: {
+  plan: Plan; plans: Plan[]; balance: PlanBalance; onConciliar: (destino: Plan, sobrante: number) => void;
+}) {
+  const d = diferenciaDeTraslado(plan, plans, balance);
+  if (!d) return null;
+  const deMas = d.diferencia > 0;
+  return (
+    <div className="glass-card border-2 border-warning p-4 space-y-2" role="status" data-testid="conciliar-traslado">
+      <p className="font-semibold">Saldo trasladado a conciliar</p>
+      <p className="text-sm">
+        El contrato {formatDateAR(plan.fechaInicio)} al {formatDateAR(plan.fechaFin)} cerró con <strong>{d.sobrante}</strong> a favor
+        ({balance.compradas + balance.saldoAnteriorAplicado} − {balance.consumidas} consumidas{balance.ajusteManual ? ` + ${balance.ajusteManual} de ajustes` : ''}{balance.ajusteInicial ? ` − ${balance.ajusteInicial} de ajuste inicial` : ''}),
+        pero se trasladaron <strong>{d.trasladado}</strong> al contrato {formatDateAR(d.destino.fechaInicio)} al {formatDateAR(d.destino.fechaFin)}.
+      </p>
+      <p className="text-sm font-semibold" data-testid="conciliar-diferencia">
+        {deMas ? `${d.diferencia} vianda(s) trasladada(s) de más` : `${-d.diferencia} vianda(s) a favor sin trasladar`}
+      </p>
+      <p className="text-xs text-muted-foreground">Nada se cambia solo. Conciliar ajusta solo lo trasladado; no toca compras, precios ni pagos.</p>
+      <Button variant="outline" className="h-11" onClick={() => onConciliar(d.destino, d.sobrante)}>Revisar y conciliar</Button>
+    </div>
   );
 }

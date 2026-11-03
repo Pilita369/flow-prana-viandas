@@ -3,16 +3,18 @@ import { formatDateAR } from '@/lib/business';
 import { useFeriados } from '@/lib/feriados';
 import { useClientData } from '@/hooks/useClientData';
 import ClientSimulator from '@/components/client/ClientSimulator';
+import ClientConsumptionView from '@/components/client/ClientConsumptionView';
+import ClientLoadState from '@/components/client/ClientLoadState';
 
 const DIAS: Record<string, string> = { lunes: 'Lunes', martes: 'Martes', miercoles: 'Miércoles', jueves: 'Jueves', viernes: 'Viernes' };
 
-/** Mi plan: cómo es el plan registrado y una simulación del próximo período (sin cambiar nada). */
+/** Mi plan: cómo es el plan registrado, el calendario de consumos (solo consulta) y una simulación (sin cambiar nada). */
 export default function ClientPlan() {
   const { accessLink } = useParams();
-  const { loading, client, plans, consumptions, activePlan: plan } = useClientData(accessLink);
+  const { loading, error, reload, client, plans, consumptions, activePlan: plan } = useClientData(accessLink);
   const { feriados } = useFeriados({ soloLectura: true });
 
-  if (loading) return <div className="text-center py-12 text-muted-foreground">Cargando...</div>;
+  if (loading || error) return <ClientLoadState loading={loading} error={error} onRetry={() => { void reload(); }} />;
   if (!client) return <div className="text-center py-12 text-muted-foreground">Cliente no encontrado</div>;
 
   const excluidas = (plan?.fechasExcluidas || []).filter(d => plan && d >= plan.fechaInicio && d <= plan.fechaFin);
@@ -40,6 +42,9 @@ export default function ClientPlan() {
       ) : (
         <div className="glass-card p-6 text-center text-muted-foreground">No tenés un contrato activo.</div>
       )}
+
+      {/* Calendario de consulta: debajo del resumen del período, solo lectura */}
+      <ClientConsumptionView client={client} plans={plans} consumptions={consumptions} feriados={feriados} />
 
       <ClientSimulator client={client} plan={plan} plans={plans} consumptions={consumptions} feriados={feriados} />
     </div>

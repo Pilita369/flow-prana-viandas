@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import { CalendarOff, ChevronLeft, ChevronRight, Table2, UtensilsCrossed } from 'lucide-react';
@@ -8,10 +8,10 @@ import { Popover, PopoverContent } from '@/components/ui/popover';
 import ConsumptionCellEditor from '@/components/ConsumptionCellEditor';
 import ContractRecalcDialog, { type RecalcItem } from '@/components/ContractRecalcDialog';
 import { ConsumptionLegend, DayMarks, SaveIndicator, TODAY_CLASS, dayStatusClass, dayTitle, dayToneClass, describeDay } from '@/components/ConsumptionShared';
-import { cellKey, useConsumptionSaver, useRefreshOnReturn } from '@/hooks/useConsumptionSaver';
+import { cellKey, prepararGuardado, useConsumptionSaver, useRefreshOnReturn } from '@/hooks/useConsumptionSaver';
 import { formatCurrencyAR, formatDateAR } from '@/lib/business';
 import {
-  capFirst, computePlanBalance, dayTotal, isConsumed, monthDays, parseISODate, planForMonth, resolvePlanForDate, todayISO, todayLabelAR,
+  capFirst, computePlanBalance, dayTotal, destinoDelConsumo, isConsumed, monthDays, parseISODate, planForMonth, resolvePlanForDate, todayISO, todayLabelAR,
 } from '@/lib/consumo';
 import { getFeriadosActuales, loadFeriados, setFeriado, useFeriados } from '@/lib/feriados';
 import { recalcularContrato } from '@/lib/habiles';
@@ -71,6 +71,11 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
   const [marcando, setMarcando] = useState<string | null>(null);
   const [recalc, setRecalc] = useState<{ cambio: string; items: RecalcItem[]; consumoDelDia: number | null } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  // Cambio sin guardar en el editor: no se cierra sin avisar (antes se perdía el valor sin decir nada)
+  const dirtyRef = useRef(false);
+  const onDirtyChange = useCallback((d: boolean) => { dirtyRef.current = d; }, []);
+  const [avisoSinGuardar, setAvisoSinGuardar] = useState(false);
+  const cerrarEditor = () => { dirtyRef.current = false; setAvisoSinGuardar(false); setEditing(null); };
   const anchorRef = useRef<HTMLElement | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -98,11 +103,11 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
 
   const rowsFor = (fecha: string) => consumptions.filter(c => c.fecha === fecha);
 
-  const save = (fecha: string, cantidad: number | null, notas?: string | null) => {
-    const existing = consRef.current.filter(c => c.fecha === fecha);
-    const planId = existing[0]?.planId || resolvePlanForDate(plans, fecha)?.id;
-    if (!planId) { toast.error('El cliente no tiene contrato cargado'); return; }
-    saver.save({ clientId: client.id, planId, fecha, cantidad, notas });
+  /** Cada guardado reemplaza el total del día y va al contrato de esa fecha (aunque esté cerrado). */
+  const save = (fecha: string, cantidad: number | null, notas?: string | null, notaCliente?: string | null) => {
+    const p = prepararGuardado({ clientId: client.id, plans, consumos: consRef.current, fecha, cantidad, notas, notaCliente, today });
+    if (!p) { toast.error('El cliente no tiene contrato cargado'); return; }
+    saver.save(p);
   };
 
   /** Marca o desmarca la fecha y, si cambia los días hábiles de un contrato confirmado, propone el nuevo cálculo. */
@@ -208,7 +213,7 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
   };
 
   const editingRows = editing ? rowsFor(editing) : [];
-  const editingPlan = editing ? plans.find(p => p.id === editingRows[0]?.planId) || resolvePlanForDate(plans, editing) : undefined;
+  const editingPlan = editing ? destinoDelConsumo(plans, editing, editingRows).plan : undefined;
   const marcandoFeriados = modo === 'feriados';
 
   return (
@@ -279,7 +284,7 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
               const isToday = d === today;
               const dayNum = parseISODate(d).getDate();
               const marca = info.feriado ? 'Feriado' : info.excluida ? 'Excluido' : '';
-              const label = `${formatDateAR(d)}: ${info.shown === null ? 'sin registro' : info.shown === 0 ? 'sin consumo' : `${info.shown} viandas`}${marca ? ` · ${marca}` : ''}${info.habitualDay ? ' · día programado' : ''}`;
+              const label = `${formatDateAR(d)}: ${info.shown === null ? 'sin registro' : info.shown === 0 ? 'sin consumo' : `${info.shown} vianda${info.shown === 1 ? "" : "s"}`}${marca ? ` · ${marca}` : ''}${info.habitualDay ? ' · día programado' : ''}`;
               const tono = marcandoFeriados
                 ? info.feriado
                   ? 'border-2 border-warning bg-warning/35 text-foreground font-bold'
@@ -295,7 +300,7 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
                   disabled={(!marcandoFeriados && info.future) || marcando === d}
                   onClick={e => {
                     if (marcandoFeriados) { void toggleMarca(d); return; }
-                    anchorRef.current = e.currentTarget; setEditing(d);
+                    anchorRef.current = e.currentTarget; dirtyRef.current = false; setAvisoSinGuardar(false); setEditing(d);
                   }}
                   onKeyDown={e => onKeyDown(e, index, d, info.savedTotal, info.hasNotes)}
                   aria-label={marcandoFeriados ? `${formatDateAR(d)}: ${marca || 'día normal'}. Tocá para ${tipoMarca === 'feriado' ? (info.feriado ? 'quitar el feriado' : 'marcar feriado') : (info.excluida ? 'quitar la exclusión' : 'excluir')}` : label}
@@ -373,7 +378,11 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
         </>
       )}
 
-      <Popover open={!!editing} onOpenChange={open => { if (!open) setEditing(null); }}>
+      <Popover open={!!editing} onOpenChange={open => {
+        if (open) return;
+        if (dirtyRef.current) { setAvisoSinGuardar(true); return; }
+        cerrarEditor();
+      }}>
         <PopoverPrimitive.Anchor virtualRef={anchorRef as React.RefObject<HTMLElement>} />
         <PopoverContent className="w-[19rem] p-3" collisionPadding={12} onOpenAutoFocus={e => e.preventDefault()}>
           {editing && (
@@ -387,9 +396,12 @@ export default function ClientConsumptionCalendar({ client, plans, consumptions,
               disponible={editingPlan ? computePlanBalance(editingPlan, consumptions, plans, today).disponible : null}
               feriado={feriados.has(editing)}
               excluida={!!editingPlan?.fechasExcluidas?.includes(editing)}
-              onSave={(cant, notas) => save(editing, cant, notas)}
+              onSave={(cant, notas, notaCliente) => save(editing, cant, notas, notaCliente)}
               onRetry={() => saver.retry(client.id, editing)}
-              onClose={() => { setEditing(null); anchorRef.current?.focus(); }}
+              onClose={() => { cerrarEditor(); anchorRef.current?.focus(); }}
+              onDirtyChange={onDirtyChange}
+              avisoSinGuardar={avisoSinGuardar}
+              contrato={editingPlan ? { desde: formatDateAR(editingPlan.fechaInicio), hasta: formatDateAR(editingPlan.fechaFin), cerrado: computePlanBalance(editingPlan, consumptions, plans, today).cerrado } : undefined}
             />
           )}
         </PopoverContent>
